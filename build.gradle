@@ -1,0 +1,17 @@
+apply plugin: 'scala'
+repositories {
+	mavenCentral()
+}
+
+dependencies {
+	compile 'org.scala-lang:scala-library:2.11.1'
+	compile "com.typesafe.akka:akka-actor_2.11:2.3.3"
+	testCompile "com.typesafe.akka:akka-testkit_2.11:2.3.3"
+	compile "org.postgresql:postgresql:9.3-1101-jdbc41"
+        compile "org.apache.commons:commons-dbcp2:2.0.1"
+	compile "commons-codec:commons-codec:1.9"
+	testCompile "org.scalatest:scalatest:2.1.6"
+	testCompile "junit:junit:4.11"
+	testCompile "com.novocode:junit-interface:0.10"
+}
+

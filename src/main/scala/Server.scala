@@ -10,6 +10,8 @@ import scala.util._
 import akka.util._
 import java.sql._
 import org.apache.commons.codec.binary._
+import com.typesafe.config.ConfigFactory
+import javax.sql.DataSource
 
 //case class User(id: Int, login: String, password: String)
 //case class Realm(id: Int, name: String)
@@ -19,18 +21,6 @@ import org.apache.commons.codec.binary._
 //case class ProfileMapping(user: Int, profile: Int)
 //case class PermissionMapping(profile: Int, permission: Int)
 //case class Session(id: Int, user: Int, realm: Int, token: String, start: Timestamp, last: Timestamp)
-
-object DBLayer {
-  lazy val DB = {
-    val db = new BasicDataSource()
-    db.setDriverClassName("org.postgresql.Driver")
-    db.setUrl("jdbc:postgresql://192.168.254.10/buh")
-    db.setUsername("buh")
-    db.setPassword("ohb4iCoo")
-    db.setMaxTotal(12)
-    db
-  }
-}
 
 object RequestHander {
   val AUTH = "auth (?<login>[^@]+)@(?<realm>[^\\s]+) (?<password>[\\w]+)".r
@@ -42,10 +32,9 @@ object RequestHander {
 
 case class Session(uid: Int, realm: String)
 
-class RequestHandler(client: String) extends Actor {
+class RequestHandler(client: String, DB: DataSource) extends Actor {
   import Tcp._
   import RequestHander._
-  import DBLayer._
   import Crypt._
   import Helpers._
   import Base64._
@@ -202,13 +191,26 @@ class RequestHandler(client: String) extends Actor {
   }
 }
 
-class Server extends Actor {
+class Server(args: scala.Array[String]) extends Actor {
   import Tcp._
-  import DBLayer._
   import context.system
+
+  lazy val config = ConfigFactory.parseFile(new java.io.File(if(args.length > 0) args(0) else "coreauth.conf"))
+
+  lazy val DB = {
+    val db = new BasicDataSource()
+    db setDriverClassName config.getString("jdbc.driver")//("org.postgresql.Driver")
+    db setUrl config.getString("jdbc.url") //("jdbc:postgresql://192.168.254.10/buh")
+
+    db setUsername config.getString("jdbc.username")//("buh")
+    db setPassword config.getString("jdbc.password")//("ohb4iCoo")
+    db.setMaxTotal(12)
+    db
+  }
+
   
   override def preStart = {
-    IO(Tcp) ! Bind(self, new InetSocketAddress(9876))
+    IO(Tcp) ! Bind(self, new InetSocketAddress(config.getInt("tcp.port")))
   }
 
   override def postStop = {
@@ -219,7 +221,7 @@ class Server extends Actor {
     case b @ Bound(localAddress) => { }//context become listening(sender())
     
     case c @ Connected(remote, local) =>
-      sender() ! Register(context.actorOf(Props(classOf[RequestHandler], remote.getHostString())))
+      sender() ! Register(context.actorOf(Props(classOf[RequestHandler], remote.getHostString(), DB)))
 
     case CommandFailed(_: Bind) => context stop self
   }

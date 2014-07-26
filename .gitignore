@@ -1,2 +1,6 @@
 target/
 build.sbt~
+/bin/
+build/
+.gradle/
+*.scala~

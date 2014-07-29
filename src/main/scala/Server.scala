@@ -199,12 +199,12 @@ class Server(args: scala.Array[String]) extends Actor {
 
   lazy val DB = {
     val db = new BasicDataSource()
-    db setDriverClassName config.getString("jdbc.driver")//("org.postgresql.Driver")
-    db setUrl config.getString("jdbc.url") //("jdbc:postgresql://192.168.254.10/buh")
+    db setDriverClassName config.getString("jdbc.driver")
+    db setUrl config.getString("jdbc.url")
 
-    db setUsername config.getString("jdbc.username")//("buh")
-    db setPassword config.getString("jdbc.password")//("ohb4iCoo")
-    db.setMaxTotal(12)
+    db setUsername config.getString("jdbc.username")
+    db setPassword config.getString("jdbc.password")
+    db setMaxTotal config.getInt("jdbc.connLimit")
     db
   }
 

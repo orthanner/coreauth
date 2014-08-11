@@ -7,7 +7,7 @@ mainClassName = "Application"
 
 ext {
     scalaVersion = '2.11'
-    scalaRelease = '1'
+    scalaRelease = '2'
     akkaVersion = '2.3.4'
 }
 

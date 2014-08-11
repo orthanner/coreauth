@@ -12,6 +12,9 @@ import java.sql._
 import org.apache.commons.codec.binary._
 import com.typesafe.config.ConfigFactory
 import javax.sql.DataSource
+import java.nio._
+import java.nio.channels._
+import java.nio.charset._
 
 //case class User(id: Int, login: String, password: String)
 //case class Realm(id: Int, name: String)
@@ -196,6 +199,9 @@ class Server(args: scala.Array[String]) extends Actor {
   import context.system
 
   lazy val config = ConfigFactory.parseFile(new java.io.File(if(args.length > 0) args(0) else "coreauth.conf"))
+    .withFallback(ConfigFactory.parseString("udp.interface=" + NetworkInterface.getByIndex(0).getName()))
+    .withFallback(ConfigFactory.parseString("udp.port=9875"))
+    .withFallback(ConfigFactory.parseString("tcp.port=9876"))
 
   lazy val DB = {
     val db = new BasicDataSource()
@@ -218,8 +224,16 @@ class Server(args: scala.Array[String]) extends Actor {
   }
   
   def receive = {
-    case b @ Bound(localAddress) => { }//context become listening(sender())
-    
+    case b @ Bound(localAddress) => { //context become listening(sender())
+      val dc = DatagramChannel.open
+        .setOption(StandardSocketOptions.SO_REUSEADDR, true)
+        .bind(new InetSocketAddress(config.getInt("udp.port")))
+      val key = dc.join(InetAddress.getByName(config.getString("udp.group")), NetworkInterface.getByName(config.getString("udp.interface")))
+      context become listening(dc, key)
+    }
+  }
+
+  def listening(dc: DatagramChannel, key: MembershipKey): Receive = {
     case c @ Connected(remote, local) =>
       sender() ! Register(context.actorOf(Props(classOf[RequestHandler], remote.getHostString(), DB)))
 

@@ -227,7 +227,7 @@ class Server(args: scala.Array[String]) extends Actor {
   def receive = {
     case b @ Bound(localAddress) => { //context become listening(sender())
       val dc = DatagramChannel.open
-        .setOption(StandardSocketOptions.SO_REUSEADDR, true)
+        .setOption[Boolean](StandardSocketOptions.SO_REUSEADDR, true)
         .bind(new InetSocketAddress(config.getInt("udp.port")))
       val key = dc.join(InetAddress.getByName(config.getString("udp.group")), NetworkInterface.getByName(config.getString("udp.interface")))
       context become listening(dc, key)

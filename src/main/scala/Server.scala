@@ -12,6 +12,7 @@ import java.sql._
 import org.apache.commons.codec.binary._
 import com.typesafe.config.ConfigFactory
 import javax.sql.DataSource
+import java.net._
 import java.nio._
 import java.nio.channels._
 import java.nio.charset._

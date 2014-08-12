@@ -155,7 +155,7 @@ class RequestHandler(client: String, DB: DataSource) extends Actor {
 	      case Failure(_) => src ! Write(ByteString("-\r\n"))
 	    }
 	  }
-	  case ATTR_UPDATE(token, name, value) => Future{
+	  case ATTR_UPDATE(token, name, value) => Future {
 	    implicit val conn = DB.getConnection
 	    val result = getSession(token, client) match {
 	      case Some(session) => {

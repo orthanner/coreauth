@@ -72,10 +72,11 @@ class RequestHandler(client: String, DB: DataSource) extends Actor {
 	context become _receive(content.drop(msg.length + 2))
 	val message = msg.utf8String.trim()
 	val src = sender()
+	val c = DB.getConnection
 	message match {
 	  case AUTH(login, realm, password) => Future {
 	    val sid = generateSecureCookie
-	    val conn = DB.getConnection
+	    val conn = c
 	    val accountQuery = conn.prepareStatement("select id from users where lower(login)=? and password=?")
 	    accountQuery.setString(1, login)
 	    accountQuery.setString(2, password)
@@ -104,7 +105,7 @@ class RequestHandler(client: String, DB: DataSource) extends Actor {
 	    case Failure(error) => src ! Write(ByteString("-%s:%s\r\n".format(error.getClass().getName(), error.getMessage().split("[\r\n]")(0))))
 	  }
 	  case CHECK(token, address, permission) => Future {
-	    implicit val conn = DB.getConnection
+	    implicit val conn = c
 	    getSession(token, address)
 	    val query = conn.prepareStatement("select count(*)>0 from user_permissions up left join permissions p on up.perm_id=p.id left join sessions s on s.user_id=up.user_id where s.token=? and s.address=? and p.name=?")
 	    query.setString(1, token)
@@ -119,7 +120,7 @@ class RequestHandler(client: String, DB: DataSource) extends Actor {
 	    case Failure(error) => src ! Write(ByteString("-%s:%s\r\n".format(error.getClass().getName(), error.getMessage())))
 	  }
 	  case STOP(token) => Future {
-	    val conn = DB.getConnection
+	    val conn = c
 	    val query = conn.prepareStatement("delete from sessions where token=? and address=?")
 	    query.setString(1, token)
 	    query.setString(2, client)
@@ -133,7 +134,7 @@ class RequestHandler(client: String, DB: DataSource) extends Actor {
 	      src ! Write(ByteString("-\r\n"))
 	  }
 	  case ATTR_QUERY(token, attr) => Future {
-	    implicit val conn = DB.getConnection
+	    implicit val conn = c
 	    val valueOption = getSession(token, client) match {
 	      case Some(session) => {
 		val aq = conn.prepareStatement("select value from extra_attrs where name=? and user_id=?")
@@ -156,7 +157,7 @@ class RequestHandler(client: String, DB: DataSource) extends Actor {
 	    }
 	  }
 	  case ATTR_UPDATE(token, name, value) => Future {
-	    implicit val conn = DB.getConnection
+	    implicit val conn = c
 	    val result = getSession(token, client) match {
 	      case Some(session) => {
 		if (value == "$"){
@@ -187,7 +188,10 @@ class RequestHandler(client: String, DB: DataSource) extends Actor {
 	    case Success(x) => src ! Write(ByteString("+%s\r\n".format(String.valueOf(x))))
 	    case Failure(_) => src ! Write(ByteString("-\r\n"))
 	  }
-	  case _ => src ! Write(ByteString("-Invalid request\r\n"))
+	  case _ => { 
+	    src ! Write(ByteString("-Invalid request\r\n"))
+	    c.close()
+	  }
 	}
       }
     }

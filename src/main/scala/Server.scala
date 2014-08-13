@@ -77,28 +77,31 @@ class RequestHandler(client: String, DB: DataSource) extends Actor {
 	  case AUTH(login, realm, password) => Future {
 	    val sid = generateSecureCookie
 	    val conn = c
-	    val accountQuery = conn.prepareStatement("select id from users where lower(login)=? and password=?")
-	    accountQuery.setString(1, login)
-	    accountQuery.setString(2, password)
-	    val rs = accountQuery.executeQuery
-	    if (rs.first()) {
-	      val uid = rs.getInt("id")
-	      val realmCheck = conn.prepareStatement("select count(*)>0 from permissions p left join realms r on p.realm=r.id where p.user=? and r.name=?")
-	      realmCheck.setInt(1, uid)
-	      realmCheck.setString(2, realm)
-	      val rc = realmCheck.executeQuery
-	      if (rc.first() && rc.getBoolean(1)) {
-		val insert = conn.prepareStatement("insert into sessions(uid, realm, token, start, last, ip) values(?, ?, current_date(), current_date(), ?)")
-		insert.setInt(1, uid)
-		insert.setString(2, sid)
-		insert.setString(3, client)
-		if (insert.executeUpdate() == 0)
-		  throw new SQLException("Could not create session")
+	    try { 
+	      val accountQuery = conn.prepareStatement("select id from users where lower(login)=? and password=?")
+	      accountQuery.setString(1, login)
+	      accountQuery.setString(2, password)
+	      val rs = accountQuery.executeQuery
+	      if (rs.first()) {
+		val uid = rs.getInt("id")
+		val realmCheck = conn.prepareStatement("select count(*)>0 from permissions p left join realms r on p.realm=r.id where p.user=? and r.name=?")
+		realmCheck.setInt(1, uid)
+		realmCheck.setString(2, realm)
+		val rc = realmCheck.executeQuery
+		if (rc.first() && rc.getBoolean(1)) {
+		  val insert = conn.prepareStatement("insert into sessions(uid, realm, token, start, last, ip) values(?, ?, current_date(), current_date(), ?)")
+		  insert.setInt(1, uid)
+		  insert.setString(2, sid)
+		  insert.setString(3, client)
+		  if (insert.executeUpdate() == 0)
+		    throw new SQLException("Could not create session")
+		} else
+		  throw new java.security.AccessControlException("Specified user cannot access this realm")
 	      } else
-		throw new java.security.AccessControlException("Specified user cannot access this realm")
-	    } else
-	      throw new java.security.AccessControlException("Invalid credentials")
-	    conn.close()
+		throw new java.security.AccessControlException("Invalid credentials")
+	    } finally { 
+	      conn.close()
+	    }
 	    sid
 	  } onComplete {
 	    case Success(sid) => src ! Write(ByteString("+%s\r\n".format(sid)))
@@ -229,7 +232,7 @@ class Server(args: scala.Array[String]) extends Actor {
   }
   
   def receive = {
-    case b @ Bound(localAddress) => { //context become listening(sender())
+    case b @ Bound(localAddress) => {
       val dc = DatagramChannel.open
         .setOption[java.lang.Boolean](StandardSocketOptions.SO_REUSEADDR, true)
         .bind(new InetSocketAddress(config.getInt("udp.port")))

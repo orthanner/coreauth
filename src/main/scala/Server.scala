@@ -74,7 +74,7 @@ class RequestHandler(client: String, DB: DataSource) extends Actor {
 
   def receive = _receive(ByteString.empty)
 
-  def decrypt(data: Array[Byte]): String = {
+  def decrypt(data: Array[Byte]): Array[Byte] = {
     ""
   }
 
@@ -91,7 +91,7 @@ class RequestHandler(client: String, DB: DataSource) extends Actor {
 	val f = Future { 
 	  message match {
 	    case HANDSHAKE(token) => {
-	      ByteString(decrypt(decodeBase64(token)))
+	      ByteString("+%s\r\n".format(encodeBase64(decrypt(decodeBase64(token)))))
 	    }
 	    case AUTH(login, realm, password) => {
 	      val sid = generateSecureCookie
@@ -155,7 +155,7 @@ class RequestHandler(client: String, DB: DataSource) extends Actor {
 	      val result = getSession(token, client) match {
 		case Some(session) => {
 		  if (value == "$"){
-		    var aq = conn.prepareStatement("delete where user_id=? and name=?")
+		    val aq = conn.prepareStatement("delete where user_id=? and name=?")
 		    aq.setInt(1, session.uid)
 		    aq.setString(2, name)
 		    aq.executeUpdate

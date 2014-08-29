@@ -74,120 +74,110 @@ class RequestHandler(client: String, DB: DataSource) extends Actor {
 
   def receive = raw_receive(ByteString.empty)
 
-  def decrypt(data: Array[Byte]): String = {
+  def decrypt(data: Array[Byte]): Array[Byte] = {
     ""
   }
 
-  def auth(login: String, realm: String, password: String)(implicit val conn: Connection): ByteString = {
-    val sid = generateSecureCookie
-    val accountQuery = conn.prepareStatement("select id from users where lower(login)=? and password=?")
-    accountQuery.setString(1, login)
-    accountQuery.setString(2, password)
-    val rs = accountQuery.executeQuery
-    if (rs.first()) {
-      val uid = rs.getInt("id")
-      val realmCheck = conn.prepareStatement("select count(*)>0 from permissions p left join realms r on p.realm=r.id where p.user=? and r.name=?")
-      realmCheck.setInt(1, uid)
-      realmCheck.setString(2, realm)
-      val rc = realmCheck.executeQuery
-      if (rc.first() && rc.getBoolean(1)) {
-	val insert = conn.prepareStatement("insert into sessions(uid, realm, token, start, last, ip) values(?, ?, current_date(), current_date(), ?)")
-	insert.setInt(1, uid)
-	insert.setString(2, sid)
-	insert.setString(3, client)
-	if (insert.executeUpdate() == 0)
-	  throw new SQLException("Could not create session")
-      } else
-	throw new java.security.AccessControlException("Specified user cannot access this realm")
-    } else
-      throw new java.security.AccessControlException("Invalid credentials")
-    ByteString("+%s\r\n".format(sid))
-  }
-
-  def check(token: String, address: String, permission: String)(implicit val conn: Connection): ByteString = {
-    getSession(token, address)
-    val query = conn.prepareStatement("select count(*)>0 from user_permissions up left join permissions p on up.perm_id=p.id left join sessions s on s.user_id=up.user_id where s.token=? and s.address=? and p.name=?")
-    query.setString(1, token)
-    query.setString(2, address)
-    query.setString(3, permission)
-    val result = query.executeQuery
-    val r = if (result.first() && result.getBoolean(1)) "+\r\n" else "-\r\n"
-    ByteString(r)
-  }
-
-  def raw_logout(token: String): ByteString = {
-    val query = conn.prepareStatement("delete from sessions where token=? and address=?")
-    query.setString(1, token)
-    query.setString(2, client)
-    val x = query.executeUpdate
-    ByteString((if (x > 0) "+" else "-") + "\r\n")
-  }
-
-  def attr_query(token: String, attr: String): ByteString = {
-    val valueOption = getSession(token, client) match {
-      case Some(session) => {
-	val aq = conn.prepareStatement("select value from extra_attrs where name=? and user_id=?")
-	aq.setString(1, attr)
-	aq.setInt(2, session.uid)
-	val result = aq.executeQuery
-	if (result.first())
-	  toOption(result.getString("value"))
-	else
-	  None
-      }
-      case None => None
-    }
-    ByteString("+%s\r\n".format(valueOption.map{ s => encodeBase64(s.getBytes("UTF-8"))}.getOrElse("$")))
-  }
-
-  def attr_update(token: String, name: String, value: String): ByteString = {
-    val result = getSession(token, client) match {
-      case Some(session) => {
-	if (value == "$"){
-	  var aq = conn.prepareStatement("delete where user_id=? and name=?")
-	  aq.setInt(1, session.uid)
-	  aq.setString(2, name)
-	  aq.executeUpdate
-	} else { 
-	  var aq = conn.prepareStatement("update extra_attrs set value=? where user_id=? and name=?")
-	  aq.setString(1, ByteString(decodeBase64(value)).utf8String)
-	  aq.setInt(2, session.uid)
-	  aq.setString(3, name)
-	  if (aq.executeUpdate == 0) {
-	    aq = conn.prepareStatement("insert into extra_attrs(user_id, name, value) values (?, ?, ?)")
-	    aq.setString(1, ByteString(decodeBase64(value)).utf8String)
-	    aq.setInt(2, session.uid)
-	    aq.setString(3, name)
-	    aq.executeUpdate
-	  } else
-	    1
-	}
-      }
-      case None => 0
-    }
-    ByteString("+%s\r\n".format(String.valueOf(result)))
-  }
-
-  def raw_receive(data: ByteString): Receive = {
+  def _receive(data: ByteString): Receive = {
     case Received(input) => {
       val content = data ++ input
       val pos = content.indexOfSlice(Seq(13, 10))
       if (pos >= 0) {
 	val msg = content.slice(0, pos)
-	context become raw_receive(content.drop(msg.length + 2))
+	context become _receive(content.drop(msg.length + 2))
 	val message = msg.utf8String.trim()
 	val src = sender()
 	implicit val conn = DB.getConnection
 	val f = Future { 
 	  message match {
 	    case HANDSHAKE(token) => {
-	      ByteString(decrypt(decodeBase64(token)))
+	      ByteString("+%s\r\n".format(encodeBase64(decrypt(decodeBase64(token)))))
 	    }
-	    case AUTH(login, realm, password) => auth(login, realm, password)
-	    case CHECK(token, address, permission) => check(token, address, permission)
-	    case STOP(token) => raw_logout(token)
-	    case ATTR_QUERY(token, attr) => attr_query(token, attr)
-	    case ATTR_UPDATE(token, name, value) => attr_update(token, name, value)
+	    case AUTH(login, realm, password) => {
+	      val sid = generateSecureCookie
+	      val accountQuery = conn.prepareStatement("select id from users where lower(login)=? and password=?")
+	      accountQuery.setString(1, login)
+	      accountQuery.setString(2, password)
+	      val rs = accountQuery.executeQuery
+	      if (rs.first()) {
+		val uid = rs.getInt("id")
+		val realmCheck = conn.prepareStatement("select count(*)>0 from permissions p left join realms r on p.realm=r.id where p.user=? and r.name=?")
+		realmCheck.setInt(1, uid)
+		realmCheck.setString(2, realm)
+		val rc = realmCheck.executeQuery
+		if (rc.first() && rc.getBoolean(1)) {
+		  val insert = conn.prepareStatement("insert into sessions(uid, realm, token, start, last, ip) values(?, ?, current_date(), current_date(), ?)")
+		  insert.setInt(1, uid)
+		  insert.setString(2, sid)
+		  insert.setString(3, client)
+		  if (insert.executeUpdate() == 0)
+		    throw new SQLException("Could not create session")
+		} else
+		  throw new java.security.AccessControlException("Specified user cannot access this realm")
+	      } else
+		throw new java.security.AccessControlException("Invalid credentials")
+	      ByteString("+%s\r\n".format(sid))
+	    }
+	    case CHECK(token, address, permission) => {
+	      getSession(token, address)
+	      val query = conn.prepareStatement("select count(*)>0 from user_permissions up left join permissions p on up.perm_id=p.id left join sessions s on s.user_id=up.user_id where s.token=? and s.address=? and p.name=?")
+	      query.setString(1, token)
+	      query.setString(2, address)
+	      query.setString(3, permission)
+	      val result = query.executeQuery
+	      val r = if (result.first() && result.getBoolean(1)) "+\r\n" else "-\r\n"
+	      ByteString(r)
+	    }
+	    case STOP(token) => {
+	      val query = conn.prepareStatement("delete from sessions where token=? and address=?")
+	      query.setString(1, token)
+	      query.setString(2, client)
+	      val x = query.executeUpdate
+	      ByteString((if (x > 0) "+" else "-") + "\r\n")
+	    }
+	    case ATTR_QUERY(token, attr) => {
+	      val valueOption = getSession(token, client) match {
+		case Some(session) => {
+		  val aq = conn.prepareStatement("select value from extra_attrs where name=? and user_id=?")
+		  aq.setString(1, attr)
+		  aq.setInt(2, session.uid)
+		  val result = aq.executeQuery
+		  if (result.first())
+		    toOption(result.getString("value"))
+		  else
+		    None
+		}
+		case None => None
+	      }
+	      ByteString("+%s\r\n".format(valueOption.map{ s => encodeBase64(s.getBytes("UTF-8"))}.getOrElse("$")))
+	    }
+	    case ATTR_UPDATE(token, name, value) => {
+	      val result = getSession(token, client) match {
+		case Some(session) => {
+		  if (value == "$"){
+		    val aq = conn.prepareStatement("delete where user_id=? and name=?")
+		    aq.setInt(1, session.uid)
+		    aq.setString(2, name)
+		    aq.executeUpdate
+		  } else { 
+		    var aq = conn.prepareStatement("update extra_attrs set value=? where user_id=? and name=?")
+		    aq.setString(1, ByteString(decodeBase64(value)).utf8String)
+		    aq.setInt(2, session.uid)
+		    aq.setString(3, name)
+		    if (aq.executeUpdate == 0) {
+		      aq = conn.prepareStatement("insert into extra_attrs(user_id, name, value) values (?, ?, ?)")
+		      aq.setString(1, ByteString(decodeBase64(value)).utf8String)
+		      aq.setInt(2, session.uid)
+		      aq.setString(3, name)
+		      aq.executeUpdate
+		    } else
+		      1
+		  }
+		}
+		case None => 0
+	      }
+	      ByteString("+%s\r\n".format(String.valueOf(result)))
+	    }
 	    case _ => { 
 	      throw new java.lang.IllegalArgumentException("Invalid request")
 	    }
@@ -198,8 +188,7 @@ class RequestHandler(client: String, DB: DataSource) extends Actor {
 	  case Success(data) => src ! data
 	  case Failure(error) => src ! Write(ByteString("-%s:%s\r\n".format(error.getClass().getName(), error.getMessage())))
 	}
-      } else
-	context become raw_receive(content)
+      }
     }
     case PeerClosed     => context stop self
   }

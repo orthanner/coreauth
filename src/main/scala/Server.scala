@@ -19,6 +19,7 @@ import java.nio.charset._
 import javax.crypto._
 import java.security._
 import java.security.cert._
+import java.security.spec._
 import java.io.{ InputStream, FileInputStream, IOException, FileNotFoundException}
 
 //case class User(id: Int, login: String, password: String)
@@ -28,38 +29,39 @@ import java.io.{ InputStream, FileInputStream, IOException, FileNotFoundExceptio
 //case class Profile(id: Int, realm: Int, name: String)
 //case class ProfileMapping(user: Int, profile: Int)
 //case class PermissionMapping(profile: Int, permission: Int)
-//case class Session(id: Int, user: Int, realm: Int, token: String, start: Timestamp, last: Timestamp)
+//case class Session(id: Int, user: Int, realm: Int, token: String, start: Timestamp, last: Timestamp, tag: String)
 
 object RequestHander {
-  val HANDSHAKE = "init (?<token>[\\w]+))".r
+  val HANDSHAKE = "init (?<cert>[\\w]+) (?<token>[\\w]+)".r
   val AUTH = "auth (?<login>[^@]+)@(?<realm>[^\\s]+) (?<password>[\\w]+)".r
-  val CHECK = "check (?<token>[A-F0-9]+) (?<address>[.:\\-\\w]+) (?<perm>[:.\\w]+)".r
+  val CHECK = "check (?<token>[A-F0-9]+) (?<tag>[.:\\-\\w]+) (?<perm>[:.\\w]+)".r
   val STOP = "logout (?<token>[A-F0-9]+)".r
   val ATTR_QUERY = "get (?<token>[A-F0-9]+)/(?<attr>[\\w.\\-_:]+)".r
   val ATTR_UPDATE = "set (?<token>[A-F0-9]+)/(?<attr>[\\w.\\-_:]+)=(?<value>[\\w]*|\\$)".r //$ -> delete
+  val LINE_DELIMITER = Seq(13, 10)
+  val CIPHER_NAME = "RSA/ECB/OAEPWithSHA-256AndMGF1Padding"
 }
 
 case class Session(uid: Int, realm: String)
 
-class RequestHandler(client: String, DB: DataSource) extends Actor {
+class RequestHandler(client: String, DB: DataSource, spkey: PrivateKey, keyGen: KeyGenerator, keyFactory: KeyFactory) extends Actor {
   import Tcp._
   import RequestHander._
   import Crypt._
-  import Helpers._
   import Base64._
 
   implicit val exec = context.dispatcher.asInstanceOf[Executor with ExecutionContext]
 
-  def read(fileIn: InputStream): Stream[(Int, Array[Byte])] = {
-    val bytes = Array.fill[Byte](1024)(0)
+  def read(fileIn: InputStream): Stream[(Int, scala.Array[Byte])] = {
+    val bytes = scala.Array.fill[Byte](1024)(0)
     val length = fileIn.read(bytes)
     (length, bytes) #:: read(fileIn)
   }
 
-  def getSession(token: String, address: String)(implicit conn: Connection): Option[Session] = {
-    val sq = conn.prepareStatement("select uid, realm from sessions where token=? and address=?")
+  def getSession(token: String, tag: String)(implicit conn: Connection): Option[Session] = {
+    val sq = conn.prepareStatement("select uid, realm from sessions where token=? and tag=?")
     sq.setString(1, token)
-    sq.setString(2, address)
+    sq.setString(2, tag)
     val s = sq.executeQuery
     if (s.first()) {
       val update = conn.prepareStatement("update sessions set last=current_timestamp() where token=?")
@@ -70,15 +72,20 @@ class RequestHandler(client: String, DB: DataSource) extends Actor {
       None
   }
 
-  def toOption[T](value: T): Option[T] = if (value == null) None else Some(value)
-
   def receive = raw_receive(ByteString.empty)
 
-  def decrypt(data: Array[Byte]): Array[Byte] = {
-    ""
+  def decrypt(data: ByteString): ByteString = {
+    data
   }
 
-  def auth(login: String, realm: String, password: String)(implicit val conn: Connection): ByteString = {
+  def encrypt(data: ByteString, cipher: Cipher): ByteString = {
+    val in = data.toByteBuffer
+    val out = ByteBuffer.allocate(cipher.getOutputSize(in.limit()))
+    cipher.update(in, out)
+    ByteString(out)
+  }
+
+  def auth(login: String, realm: String, password: String, tag: String)(implicit conn: Connection): String = {
     val sid = generateSecureCookie
     val accountQuery = conn.prepareStatement("select id from users where lower(login)=? and password=?")
     accountQuery.setString(1, login)
@@ -91,56 +98,52 @@ class RequestHandler(client: String, DB: DataSource) extends Actor {
       realmCheck.setString(2, realm)
       val rc = realmCheck.executeQuery
       if (rc.first() && rc.getBoolean(1)) {
-	val insert = conn.prepareStatement("insert into sessions(uid, realm, token, start, last, ip) values(?, ?, current_date(), current_date(), ?)")
+	val insert = conn.prepareStatement("insert into sessions(uid, realm, token, start, last, tag) values(?, ?, current_date(), current_date(), ?)")
 	insert.setInt(1, uid)
 	insert.setString(2, sid)
-	insert.setString(3, client)
+	insert.setString(3, tag)
 	if (insert.executeUpdate() == 0)
 	  throw new SQLException("Could not create session")
       } else
 	throw new java.security.AccessControlException("Specified user cannot access this realm")
     } else
       throw new java.security.AccessControlException("Invalid credentials")
-    ByteString("+%s\r\n".format(sid))
+    "+%s\r\n".format(sid)
   }
 
-  def check(token: String, address: String, permission: String)(implicit val conn: Connection): ByteString = {
-    getSession(token, address)
-    val query = conn.prepareStatement("select count(*)>0 from user_permissions up left join permissions p on up.perm_id=p.id left join sessions s on s.user_id=up.user_id where s.token=? and s.address=? and p.name=?")
+  def check(token: String, tag: String, permission: String)(implicit conn: Connection): String = {
+    getSession(token, tag)
+    val query = conn.prepareStatement("select count(*)>0 from user_permissions up left join permissions p on up.perm_id=p.id left join sessions s on s.user_id=up.user_id where s.token=? and s.tag=? and p.name=?")
     query.setString(1, token)
-    query.setString(2, address)
+    query.setString(2, tag)
     query.setString(3, permission)
     val result = query.executeQuery
-    val r = if (result.first() && result.getBoolean(1)) "+\r\n" else "-\r\n"
-    ByteString(r)
+    if (result.first() && result.getBoolean(1)) "+\r\n" else "-\r\n"
   }
 
-  def raw_logout(token: String): ByteString = {
-    val query = conn.prepareStatement("delete from sessions where token=? and address=?")
+  def logout(token: String, tag: String)(implicit conn: Connection): String = {
+    val query = conn.prepareStatement("delete from sessions where token=? and tag=?")
     query.setString(1, token)
-    query.setString(2, client)
+    query.setString(2, tag)
     val x = query.executeUpdate
-    ByteString((if (x > 0) "+" else "-") + "\r\n")
+    if (x > 0) "+\r\n" else "-\r\n"
   }
 
-  def attr_query(token: String, attr: String): ByteString = {
-    val valueOption = getSession(token, client) match {
-      case Some(session) => {
+  def attr_query(token: String, attr: String)(implicit conn: Connection): String = {
+    val value = getSession(token, client) flatMap { session =>
 	val aq = conn.prepareStatement("select value from extra_attrs where name=? and user_id=?")
 	aq.setString(1, attr)
 	aq.setInt(2, session.uid)
 	val result = aq.executeQuery
 	if (result.first())
-	  toOption(result.getString("value"))
+	  Option(encodeBase64String(result.getString("value").getBytes("UTF-8")))
 	else
 	  None
-      }
-      case None => None
     }
-    ByteString("+%s\r\n".format(valueOption.map{ s => encodeBase64(s.getBytes("UTF-8"))}.getOrElse("$")))
+    "+%s\r\n".format(value.getOrElse("$"))
   }
 
-  def attr_update(token: String, name: String, value: String): ByteString = {
+  def attr_update(token: String, name: String, value: String)(implicit conn: Connection): String = {
     val result = getSession(token, client) match {
       case Some(session) => {
 	if (value == "$"){
@@ -165,37 +168,46 @@ class RequestHandler(client: String, DB: DataSource) extends Actor {
       }
       case None => 0
     }
-    ByteString("+%s\r\n".format(String.valueOf(result)))
+    "+%s\r\n".format(String.valueOf(result))
   }
 
   def raw_receive(data: ByteString): Receive = {
     case Received(input) => {
       val content = data ++ input
-      val pos = content.indexOfSlice(Seq(13, 10))
+      val pos = content.indexOfSlice(LINE_DELIMITER)
       if (pos >= 0) {
 	val msg = content.slice(0, pos)
 	context become raw_receive(content.drop(msg.length + 2))
 	val message = msg.utf8String.trim()
 	val src = sender()
 	implicit val conn = DB.getConnection
-	val f = Future { 
+	Future {
 	  message match {
-	    case HANDSHAKE(token) => {
-	      ByteString("+%s\r\n".format(encodeBase64(decrypt(decodeBase64(token)))))
+	    case HANDSHAKE(cert, token) => {
+	      val aesKey: SecretKey = keyGen.generateKey
+	      val clientKey: PublicKey = keyFactory.generatePublic(new PKCS8EncodedKeySpec(decodeBase64(cert)))
+	      val clientCipher = Cipher.getInstance(CIPHER_NAME)
+	      clientCipher.init(Cipher.ENCRYPT_MODE, clientKey)
+	      val encryptor = Cipher.getInstance(CIPHER_NAME)
+	      encryptor.init(Cipher.ENCRYPT_MODE, aesKey)
+	      val decryptor = Cipher.getInstance(CIPHER_NAME)
+	      decryptor.init(Cipher.DECRYPT_MODE, aesKey)
+	      val skey = encodeBase64(clientCipher.update(aesKey.getEncoded))
+	      val decryptedToken = encodeBase64(decrypt(ByteString(decodeBase64(token))).toArray[Byte])
+	      context become crypto_receive(ByteString.empty, encryptor, decryptor, "key:%s".format(encodeBase64(clientKey.getEncoded)))
+	      "+%s %s\r\n".format(skey, decryptedToken)
 	    }
-	    case AUTH(login, realm, password) => auth(login, realm, password)
-	    case CHECK(token, address, permission) => check(token, address, permission)
-	    case STOP(token) => raw_logout(token)
+	    case AUTH(login, realm, password) => auth(login, realm, password, "ip:%s".format(client))
+	    case CHECK(token, tag, permission) => check(token, tag, permission)
+	    case STOP(token) => logout(token, "ip:%s".format(client))
 	    case ATTR_QUERY(token, attr) => attr_query(token, attr)
 	    case ATTR_UPDATE(token, name, value) => attr_update(token, name, value)
-	    case _ => { 
-	      throw new java.lang.IllegalArgumentException("Invalid request")
-	    }
+	    case _ => throw new java.lang.IllegalArgumentException("Invalid request")
 	  }
 	} andThen {
 	  case r => conn.close()
 	} onComplete {
-	  case Success(data) => src ! data
+	  case Success(data) => src ! Write(ByteString(data))
 	  case Failure(error) => src ! Write(ByteString("-%s:%s\r\n".format(error.getClass().getName(), error.getMessage())))
 	}
       } else
@@ -203,6 +215,38 @@ class RequestHandler(client: String, DB: DataSource) extends Actor {
     }
     case PeerClosed     => context stop self
   }
+
+  def crypto_receive(data: ByteString, encryptor: Cipher, decryptor: Cipher, pkey: String): Receive = {
+    case Received(input) => {
+      val content = data ++ encrypt(input, decryptor)
+      val pos = content.indexOfSlice(Seq(13, 10))
+      if (pos >= 0) {
+	val msg = content.slice(0, pos)
+	context become crypto_receive(content.drop(msg.length + 2), encryptor, decryptor, pkey)
+	val message = msg.utf8String.trim()
+	val src = sender()
+	implicit val conn = DB.getConnection
+	Future {
+	  message match {
+	    case AUTH(login, realm, password) => auth(login, realm, password, pkey)
+	    case CHECK(token, tag, permission) => check(token, tag, permission)
+	    case STOP(token) => logout(token, pkey)
+	    case ATTR_QUERY(token, attr) => attr_query(token, attr)
+	    case ATTR_UPDATE(token, name, value) => attr_update(token, name, value)
+	    case _ => throw new java.lang.IllegalArgumentException("Invalid request")
+	  }
+	} andThen {
+	  case r => conn.close()
+	} onComplete {
+	  case Success(data) => src ! Write(encrypt(ByteString(data), encryptor))
+	  case Failure(error) => src ! Write(encrypt(ByteString("-%s:%s\r\n".format(error.getClass().getName(), error.getMessage())), encryptor))
+	}
+      } else
+	context become crypto_receive(content, encryptor, decryptor, pkey)
+    }
+    case PeerClosed     => context stop self
+  }
+
 }
 
 class Server(args: scala.Array[String]) extends Actor {
@@ -225,13 +269,21 @@ class Server(args: scala.Array[String]) extends Actor {
     db
   }
 
-  
+  lazy val keyGen = {
+    val kg = KeyGenerator.getInstance("AES")
+    kg.init(256)
+    kg
+  }
+
+  lazy val keyFactory = KeyFactory.getInstance("RSA")
+
   override def preStart = {
     IO(Tcp) ! Bind(self, new InetSocketAddress(config.getInt("tcp.port")))
   }
 
   override def postStop = {
     IO(Tcp) ! Unbind
+    context become receive
   }
   
   def receive = {
@@ -242,13 +294,13 @@ class Server(args: scala.Array[String]) extends Actor {
       val key = dc.join(InetAddress.getByName(config.getString("udp.group")), NetworkInterface.getByName(config.getString("udp.interface")))
       context become listening(dc, key)
     }
+
+    case CommandFailed(_: Bind) => context stop self
   }
 
   def listening(dc: DatagramChannel, key: MembershipKey): Receive = {
     case c @ Connected(remote, local) =>
-      sender() ! Register(context.actorOf(Props(classOf[RequestHandler], remote.getHostString(), DB)))
-
-    case CommandFailed(_: Bind) => context stop self
+      sender() ! Register(context.actorOf(Props(classOf[RequestHandler], remote.getHostString(), DB, keyGen, keyFactory)))
   }
 
 }

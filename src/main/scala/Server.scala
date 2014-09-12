@@ -17,10 +17,12 @@ import java.nio._
 import java.nio.channels._
 import java.nio.charset._
 import javax.crypto._
-import java.security._
+import java.security.{ Key, PrivateKey, PublicKey, KeyFactory }
 import java.security.cert._
 import java.security.spec._
-import java.io.{ InputStream, FileInputStream, IOException, FileNotFoundException}
+import java.io.{ InputStream, FileInputStream, IOException, FileNotFoundException }
+import rx.lang.scala._
+import rx.lang.scala.subjects._
 
 //case class User(id: Int, login: String, password: String)
 //case class Realm(id: Int, name: String)
@@ -44,13 +46,15 @@ object RequestHander {
 
 case class Session(uid: Int, realm: String)
 
-class RequestHandler(client: String, DB: DataSource, spkey: PrivateKey, keyGen: KeyGenerator, keyFactory: KeyFactory) extends Actor {
+class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificate: Certificate, keyGen: KeyGenerator) extends Actor {
   import Tcp._
   import RequestHander._
   import Crypt._
   import Base64._
 
   implicit val exec = context.dispatcher.asInstanceOf[Executor with ExecutionContext]
+
+  val keyFactory = KeyFactory.getInstance("RSA")
 
   def read(fileIn: InputStream): Stream[(Int, scala.Array[Byte])] = {
     val bytes = scala.Array.fill[Byte](1024)(0)
@@ -275,7 +279,14 @@ class Server(args: scala.Array[String]) extends Actor {
     kg
   }
 
-  lazy val keyFactory = KeyFactory.getInstance("RSA")
+  val cf = CertificateFactory.getInstance("X.509")
+
+  lazy val certificate = Try {
+    val in = new FileInputStream(config.getString("ssl.cert"))
+    val cert = cf.generateCertificate(in)
+    in.close()
+    cert
+  }
 
   override def preStart = {
     IO(Tcp) ! Bind(self, new InetSocketAddress(config.getInt("tcp.port")))
@@ -289,8 +300,9 @@ class Server(args: scala.Array[String]) extends Actor {
   def receive = {
     case b @ Bound(localAddress) => {
       val dc = DatagramChannel.open
-        .setOption[java.lang.Boolean](StandardSocketOptions.SO_REUSEADDR, true)
-        .bind(new InetSocketAddress(config.getInt("udp.port")))
+       .setOption[java.lang.Boolean](StandardSocketOptions.SO_REUSEADDR, true)
+       .bind(new InetSocketAddress(config.getInt("udp.port")))
+      dc.configureBlocking(false)
       val key = dc.join(InetAddress.getByName(config.getString("udp.group")), NetworkInterface.getByName(config.getString("udp.interface")))
       context become listening(dc, key)
     }
@@ -300,7 +312,7 @@ class Server(args: scala.Array[String]) extends Actor {
 
   def listening(dc: DatagramChannel, key: MembershipKey): Receive = {
     case c @ Connected(remote, local) =>
-      sender() ! Register(context.actorOf(Props(classOf[RequestHandler], remote.getHostString(), DB, keyGen, keyFactory)))
+      sender() ! Register(context.actorOf(Props(classOf[RequestHandler], remote.getHostString(), DB, keyGen, certificate)))
   }
 
 }

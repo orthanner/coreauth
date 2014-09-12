@@ -20,6 +20,7 @@ dependencies {
 	compile "com.typesafe.akka:akka-actor_$scalaVersion:$akkaVersion"
 	compile "com.typesafe.akka:akka-cluster_$scalaVersion:$akkaVersion"
 	compile "com.typesafe:config:1.2.1"
+	compile "com.netflix.rxjava:rxjava-scala:0.20.4"
 	testCompile "com.typesafe.akka:akka-testkit_$scalaVersion:$akkaVersion"
 	compile "org.postgresql:postgresql:9.3-1101-jdbc41"
 	compile 'org.mariadb.jdbc:mariadb-java-client:1.1.7'

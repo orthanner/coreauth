@@ -47,6 +47,14 @@ object RequestHander {
 
 case class Session(uid: Int, realm: String)
 
+final case class MulticastGroup(address: String, interface: String) extends SocketOption {
+  override def afterConnect(c: DatagramChannel) {
+    val group = InetAddress.getByName(address)
+    val networkInterface = NetworkInterface.getByName(interface)
+    c.join(group, networkInterface)
+  }
+}
+
 class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificate: Certificate, keyGen: KeyGenerator) extends Actor {
   import Tcp._
   import RequestHander._

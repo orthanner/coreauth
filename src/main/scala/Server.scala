@@ -34,7 +34,7 @@ import rx.lang.scala.subjects._
 //case class Session(id: Int, user: Int, realm: Int, token: String, start: Timestamp, last: Timestamp, tag: String)
 
 object RequestHander {
-  val HANDSHAKE = "init (?<cert>[\\w]+) (?<token>[\\w]+)".r
+  val HANDSHAKE = "starttsl (?<cert>[\\w]+)".r
   val AUTH = "auth (?<login>[^@]+)@(?<realm>[^\\s]+) (?<password>[\\w]+)".r
   val CHECK = "check (?<token>[A-F0-9]+) (?<tag>[.:\\-\\w]+) (?<perm>[:.\\w]+)".r
   val STOP = "logout (?<token>[A-F0-9]+)".r
@@ -42,6 +42,7 @@ object RequestHander {
   val ATTR_UPDATE = "set (?<token>[A-F0-9]+)/(?<attr>[\\w.\\-_:]+)=(?<value>[\\w]*|\\$)".r //$ -> delete
   val LINE_DELIMITER = Seq(13, 10)
   val CIPHER_NAME = "RSA/ECB/OAEPWithSHA-256AndMGF1Padding"
+  val SIGNATURE_ALGORITHM = "SHA512withRSA"
 }
 
 case class Session(uid: Int, realm: String)
@@ -187,7 +188,7 @@ class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificat
 	implicit val conn = DB.getConnection
 	async {
 	  message match {
-	    case HANDSHAKE(cert, token) => {
+	    case HANDSHAKE(cert) => {
 	      //generate session encryption key
 	      val aesKey = keyGen.generateKey
 	      //decode and parse client key
@@ -198,7 +199,7 @@ class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificat
 	      val keyData = clientCipher.update(aesKey.getEncoded)
 	      val skey = encodeBase64(keyData)
 	      //...and sign it
-	      val signature = Signature.getInstance("SHA512withRSA")
+	      val signature = Signature.getInstance(SIGNATURE_ALGORITHM)
 	      signature.initSign(key)
 	      signature.update(keyData)
 	      val signatureData = encodeBase64(signature.sign())
@@ -207,12 +208,10 @@ class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificat
 	      encryptor.init(Cipher.ENCRYPT_MODE, aesKey)
 	      val decryptor = Cipher.getInstance(CIPHER_NAME)
 	      decryptor.init(Cipher.DECRYPT_MODE, aesKey)
-	      //decrypt token supplied by client
-	      val decryptedToken = encodeBase64(decrypt(ByteString(decodeBase64(token))).toArray[Byte])
 	      //switch to TSL
 	      context become crypto_receive(ByteString.empty, encryptor, decryptor, "key:%s".format(encodeBase64(clientKey.getEncoded)))
 	      //send reply
-	      "+%s %s %s\r\n".format(skey, signatureData, decryptedToken)
+	      "+%s %s\r\n".format(skey, signatureData)
 	    }
 	    case AUTH(login, realm, password) => auth(login, realm, password, "ip:%s".format(client))
 	    case CHECK(token, tag, permission) => check(token, tag, permission)

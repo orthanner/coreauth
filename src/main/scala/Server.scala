@@ -185,21 +185,34 @@ class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificat
 	val message = msg.utf8String.trim()
 	val src = sender()
 	implicit val conn = DB.getConnection
-	Future {
+	async {
 	  message match {
 	    case HANDSHAKE(cert, token) => {
-	      val aesKey: SecretKey = keyGen.generateKey
-	      val clientKey: PublicKey = keyFactory.generatePublic(new PKCS8EncodedKeySpec(decodeBase64(cert)))
+	      //generate session encryption key
+	      val aesKey = keyGen.generateKey
+	      //decode and parse client key
+	      val clientKey = keyFactory.generatePublic(new PKCS8EncodedKeySpec(decodeBase64(cert)))
+	      //encrypt session key for client...
 	      val clientCipher = Cipher.getInstance(CIPHER_NAME)
 	      clientCipher.init(Cipher.ENCRYPT_MODE, clientKey)
+	      val keyData = clientCipher.update(aesKey.getEncoded)
+	      val skey = encodeBase64(keyData)
+	      //...and sign it
+	      val signature = Signature.getInstance("SHA512withRSA")
+	      signature.initSign(key)
+	      signature.update(keyData)
+	      val signatureData = encodeBase64(signature.sign())
+	      //create encyption and decryption ciphers for the session
 	      val encryptor = Cipher.getInstance(CIPHER_NAME)
 	      encryptor.init(Cipher.ENCRYPT_MODE, aesKey)
 	      val decryptor = Cipher.getInstance(CIPHER_NAME)
 	      decryptor.init(Cipher.DECRYPT_MODE, aesKey)
-	      val skey = encodeBase64(clientCipher.update(aesKey.getEncoded))
+	      //decrypt token supplied by client
 	      val decryptedToken = encodeBase64(decrypt(ByteString(decodeBase64(token))).toArray[Byte])
+	      //switch to TSL
 	      context become crypto_receive(ByteString.empty, encryptor, decryptor, "key:%s".format(encodeBase64(clientKey.getEncoded)))
-	      "+%s %s\r\n".format(skey, decryptedToken)
+	      //send reply
+	      "+%s %s %s\r\n".format(skey, signatureData, decryptedToken)
 	    }
 	    case AUTH(login, realm, password) => auth(login, realm, password, "ip:%s".format(client))
 	    case CHECK(token, tag, permission) => check(token, tag, permission)
@@ -209,7 +222,7 @@ class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificat
 	    case _ => throw new java.lang.IllegalArgumentException("Invalid request")
 	  }
 	} andThen {
-	  case r => conn.close()
+	  case r => conn.close
 	} onComplete {
 	  case Success(data) => src ! Write(ByteString(data))
 	  case Failure(error) => src ! Write(ByteString("-%s:%s\r\n".format(error.getClass().getName(), error.getMessage())))
@@ -230,7 +243,7 @@ class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificat
 	val message = msg.utf8String.trim()
 	val src = sender()
 	implicit val conn = DB.getConnection
-	Future {
+	async {
 	  message match {
 	    case AUTH(login, realm, password) => auth(login, realm, password, pkey)
 	    case CHECK(token, tag, permission) => check(token, tag, permission)

@@ -24,11 +24,11 @@ class DatagramHandler(certificate: Certificate, bindAddr: InetSocketAddress, gro
 
   val alive = new AtomicBoolean()
   var pending = Map[SocketAddress, scala.Array[Byte]]()
-  val channel = DatagramChannel.open.setOption[java.lang.Boolean](StandardSocketOptions.SO_REUSEADDR, true)
   //val selector = Selector.open
 
   def run(): Unit = {
-    channel.bind(bindAddr).configureBlocking(false)
+    var channel = DatagramChannel.open.setOption[java.lang.Boolean](StandardSocketOptions.SO_REUSEADDR, true).bind(bindAddr)
+    channel.configureBlocking(false)
     val key = channel.join(group, iface)
     //selector.register(channel, SelectionKey.OP_READ | SelectionKey.OP_WRITE)
     val buffer = ByteBuffer.allocate(1024)
@@ -40,7 +40,7 @@ class DatagramHandler(certificate: Certificate, bindAddr: InetSocketAddress, gro
       `yield`()
     }
     key.drop
-    channel.unbind
+    channel.close
   }
 
 }

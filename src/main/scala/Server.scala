@@ -47,14 +47,6 @@ object RequestHander {
 
 case class Session(uid: Int, realm: String)
 
-final case class MulticastGroup(address: String, interface: String) extends SocketOption {
-  override def afterConnect(c: DatagramChannel) {
-    val group = InetAddress.getByName(address)
-    val networkInterface = NetworkInterface.getByName(interface)
-    c.join(group, networkInterface)
-  }
-}
-
 class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificate: Option[Certificate], keyGen: KeyGenerator) extends Actor {
   import Tcp._
   import RequestHander._
@@ -306,7 +298,7 @@ class Server(args: scala.Array[String]) extends Actor {
     val cert = cf.generateCertificate(in)
     in.close()
     cert
-  }
+  } toOption
 
   lazy val key = Try {
     val in = new FileInputStream(config.getString("ssl.key"))

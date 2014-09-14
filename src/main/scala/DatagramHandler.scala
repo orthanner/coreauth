@@ -17,25 +17,30 @@ import java.io.{ InputStream, FileInputStream, IOException, FileNotFoundExceptio
 import java.util.concurrent._
 import java.util.concurrent.atomic._
 import java.util.concurrent.locks._
-import akka.actor._
-import akka.io._
 
 case class Data(source: SocketAddress, data: List[Byte])
 
-class DatagramHandler(certificate: Certificate) extends Actor {
-  import Udp._
-  import context.system
+class DatagramHandler(certificate: Certificate, bindAddr: InetSocketAddress, group: InetAddress, iface: NetworkInterface) extends Thread {
 
+  val alive = new AtomicBoolean()
   var pending = Map[SocketAddress, scala.Array[Byte]]()
+  val channel = DatagramChannel.open.setOption[java.lang.Boolean](StandardSocketOptions.SO_REUSEADDR, true)
+  //val selector = Selector.open
 
-  def receive: Receive = {
-    case b @ Bound(addr) => context become listening(sender())
-  }
-
-  def listening(socket: ActorRef): Receive = {
-    case Received(data, remote) =>
-    case Unbind  => socket ! Unbind
-    case Unbound => context stop self
+  def run(): Unit = {
+    channel.bind(bindAddr).configureBlocking(false)
+    val key = channel.join(group, iface)
+    //selector.register(channel, SelectionKey.OP_READ | SelectionKey.OP_WRITE)
+    val buffer = ByteBuffer.allocate(1024)
+    while(alive.get) {
+      Option(channel.receive(buffer)) match {
+        case Some(client) =>
+        case None =>
+      }
+      `yield`()
+    }
+    key.drop
+    channel.unbind
   }
 
 }

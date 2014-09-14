@@ -325,20 +325,26 @@ class Server(args: scala.Array[String]) extends Actor {
   
   def receive = {
     case b @ Bound(localAddress) => {
-      certificate match {
-        case Some(cert) =>
-          IO(Udp) ! Udp.Bind(system.actorOf(Props(classOf[DatagramHandler], cert)), new InetSocketAddress(config.getInt("udp.port")), List(MulticastGroup(config.getString("udp.group"), config.getString("udp.interface"))))
+      val announcer = certificate map { cert =>
+        new DatagramHandler(cert, new InetSocketAddress(config.getInt("udp.port")), InetAddress.getByName(config.getString("udp.group")), NetworkInterface.getByName(config.getString("udp.interface")))
       }
       
-      context become listening
+      context become listening(announcer)
     }
     case CommandFailed(_: Bind) => context stop self
     case _ =>
   }
 
-  def listening: Receive = {
+  def listening(announcer: Option[DatagramHandler]): Receive = {
     case c @ Connected(remote, local) =>
       sender() ! Register(context.actorOf(Props(classOf[RequestHandler], remote.getHostString(), DB, keyGen, certificate)))
+    case Unbind =>
+      announcer match {
+        case Some(thread) =>
+          thread.alive.set(false)
+        case None =>
+      }
+      context become receive
     case _ =>
   }
 

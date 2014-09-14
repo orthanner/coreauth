@@ -26,7 +26,7 @@ class DatagramHandler(certificate: Certificate, bindAddr: InetSocketAddress, gro
   var pending = Map[SocketAddress, scala.Array[Byte]]()
   //val selector = Selector.open
 
-  def run(): Unit = {
+  override def run(): Unit = {
     var channel = DatagramChannel.open.setOption[java.lang.Boolean](StandardSocketOptions.SO_REUSEADDR, true).bind(bindAddr)
     channel.configureBlocking(false)
     val key = channel.join(group, iface)

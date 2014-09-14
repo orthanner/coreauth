@@ -23,6 +23,8 @@ import java.security.spec._
 import java.io.{ InputStream, FileInputStream, IOException, FileNotFoundException }
 import rx.lang.scala._
 import rx.lang.scala.subjects._
+import ExecutionContext.Implicits.global
+import scala.async.Async.{async, await}
 
 //case class User(id: Int, login: String, password: String)
 //case class Realm(id: Int, name: String)

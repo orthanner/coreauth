@@ -37,7 +37,7 @@ class DatagramHandler(certificate: Certificate, bindAddr: InetSocketAddress, gro
         case Some(client) =>
         case None =>
       }
-      `yield`()
+      Thread.`yield`()
     }
     key.drop
     channel.close

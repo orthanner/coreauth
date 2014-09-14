@@ -307,7 +307,7 @@ class Server(args: scala.Array[String]) extends Actor with Loader {
   lazy val key = Try {
     val in = new FileInputStream(config.getString("ssl.key"))
     val kf = KeyFactory.getInstance("RSA")
-    kf.generatePrivate(read(in) takeWhile { _._1 > 0 } foldLeft(ByteString.empty) { (acc: ByteString, data: ByteString) => acc ++ data } toArray[Byte])
+    kf.generatePrivate(read(in) takeWhile { _._1 > 0 } foldLeft(ByteString.empty) ((acc: ByteString, data: ByteString) => acc ++ data) toArray[Byte])
   } toOption
 
   override def preStart = {

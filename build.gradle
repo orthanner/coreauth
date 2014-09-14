@@ -8,11 +8,14 @@ mainClassName = "Application"
 ext {
     scalaVersion = '2.11'
     scalaRelease = '2'
-    akkaVersion = '2.3.6'
+    akkaVersion = '2.4-SNAPSHOT'
 }
 
 repositories {
 	mavenCentral()
+        maven {
+              url "http://repo.akka.io/snapshots/"
+        }
 }
 
 dependencies {

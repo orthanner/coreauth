@@ -55,7 +55,7 @@ final case class MulticastGroup(address: String, interface: String) extends Sock
   }
 }
 
-class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificate: Certificate, keyGen: KeyGenerator) extends Actor {
+class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificate: Option[Certificate], keyGen: KeyGenerator) extends Actor {
   import Tcp._
   import RequestHander._
   import Crypt._
@@ -308,6 +308,12 @@ class Server(args: scala.Array[String]) extends Actor {
     cert
   }
 
+  lazy val key = Try {
+    val in = new FileInputStream(config.getString("ssl.key"))
+    val kf = KeyFactory.getInstance("RSA")
+    val keyData = read(in) takeWhile { _._1 > 0 } foldLeft(ByteString.empty) { (acc, data) => acc ++ data }
+  } toOption
+
   override def preStart = {
     IO(Tcp) ! Bind(self, new InetSocketAddress(config.getInt("tcp.port")))
   }
@@ -319,20 +325,21 @@ class Server(args: scala.Array[String]) extends Actor {
   
   def receive = {
     case b @ Bound(localAddress) => {
-      val dc = DatagramChannel.open
-       .setOption[java.lang.Boolean](StandardSocketOptions.SO_REUSEADDR, true)
-       .bind(new InetSocketAddress(config.getInt("udp.port")))
-      dc.configureBlocking(false)
-      val key = dc.join(InetAddress.getByName(config.getString("udp.group")), NetworkInterface.getByName(config.getString("udp.interface")))
-      context become listening(dc, key)
+      certificate match {
+        case Some(cert) =>
+          IO(Udp) ! Udp.Bind(system.actorOf(Props(classOf[DatagramHandler], cert), List(MulticastGroup(config.getString("udp.group"), config.getString("udp.interface"))))), new InetSocketAddress(config.getInt("udp.port"))
+      }
+      
+      context become listening
     }
-
     case CommandFailed(_: Bind) => context stop self
+    case _ =>
   }
 
-  def listening(dc: DatagramChannel, key: MembershipKey): Receive = {
+  def listening: Receive = {
     case c @ Connected(remote, local) =>
       sender() ! Register(context.actorOf(Props(classOf[RequestHandler], remote.getHostString(), DB, keyGen, certificate)))
+    case _ =>
   }
 
 }

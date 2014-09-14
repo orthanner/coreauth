@@ -20,21 +20,20 @@ import java.util.concurrent.locks._
 
 case class Data(source: SocketAddress, data: List[Byte])
 
-class DatagramHandler(val channel: DatagramChannel, certificate: Certificate) extends Thread {
+class DatagramHandler(certificate: Certificate) extends Actor {
+  import Udp._
+  import context.system
 
-  val alive = new AtomicBoolean()
-  val buffer = ByteBuffer.allocate(1024)
   var pending = Map[SocketAddress, scala.Array[Byte]]()
 
-  override def run(): Unit = {
-    while(alive.get) {
-      Option(channel.receive(buffer)) match {
-	case Some(client) => {
-	  
-	}
-	case None =>
-      }
-    }
+  def receive: Receive = {
+    case b @ Bound(addr) => context become listening(sender())
   }
-  
+
+  def listening(socket: ActorRef): Receive = {
+    case Received(data, remote) =>
+    case Unbind  => socket ! Unbind
+    case Unbound => context stop self
+  }
+
 }

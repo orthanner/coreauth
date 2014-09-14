@@ -327,7 +327,7 @@ class Server(args: scala.Array[String]) extends Actor {
     case b @ Bound(localAddress) => {
       certificate match {
         case Some(cert) =>
-          IO(Udp) ! Udp.Bind(system.actorOf(Props(classOf[DatagramHandler], cert), new InetSocketAddress(config.getInt("udp.port"), List(MulticastGroup(config.getString("udp.group"), config.getString("udp.interface")))))
+          IO(Udp) ! Udp.Bind(system.actorOf(Props(classOf[DatagramHandler], cert)), new InetSocketAddress(config.getInt("udp.port"), List(MulticastGroup(config.getString("udp.group"), config.getString("udp.interface")))))
       }
       
       context become listening

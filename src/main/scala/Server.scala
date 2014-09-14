@@ -17,7 +17,7 @@ import java.nio._
 import java.nio.channels._
 import java.nio.charset._
 import javax.crypto._
-import java.security.{ Key, PrivateKey, PublicKey, KeyFactory }
+import java.security.{ Key, PrivateKey, PublicKey, KeyFactory, Signature }
 import java.security.cert._
 import java.security.spec._
 import java.io.{ InputStream, FileInputStream, IOException, FileNotFoundException }
@@ -49,7 +49,15 @@ object RequestHander {
 
 case class Session(uid: Int, realm: String)
 
-class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificate: Option[Certificate], keyGen: KeyGenerator) extends Actor {
+trait Loader {
+  def read(fileIn: InputStream): Stream[(Int, scala.Array[Byte])] = {
+    val bytes = scala.Array.fill[Byte](1024)(0)
+    val length = fileIn.read(bytes)
+    (length, bytes) #:: read(fileIn)
+  }
+}
+
+class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificate: Option[Certificate], keyGen: KeyGenerator) extends Actor with Loader {
   import Tcp._
   import RequestHander._
   import Crypt._
@@ -58,12 +66,6 @@ class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificat
   implicit val exec = context.dispatcher.asInstanceOf[Executor with ExecutionContext]
 
   val keyFactory = KeyFactory.getInstance("RSA")
-
-  def read(fileIn: InputStream): Stream[(Int, scala.Array[Byte])] = {
-    val bytes = scala.Array.fill[Byte](1024)(0)
-    val length = fileIn.read(bytes)
-    (length, bytes) #:: read(fileIn)
-  }
 
   def getSession(token: String, tag: String)(implicit conn: Connection): Option[Session] = {
     val sq = conn.prepareStatement("select uid, realm from sessions where token=? and tag=?")
@@ -267,7 +269,7 @@ class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificat
 
 }
 
-class Server(args: scala.Array[String]) extends Actor {
+class Server(args: scala.Array[String]) extends Actor with Loader {
   import Tcp._
   import context.system
 
@@ -305,7 +307,8 @@ class Server(args: scala.Array[String]) extends Actor {
   lazy val key = Try {
     val in = new FileInputStream(config.getString("ssl.key"))
     val kf = KeyFactory.getInstance("RSA")
-    val keyData = read(in) takeWhile { _._1 > 0 } foldLeft(ByteString.empty) { (acc, data) => acc ++ data }
+    val keyData = read(in) takeWhile { _._1 > 0 } foldLeft(ByteString.empty) { (acc: ByteString, data: ByteString) => acc ++ data } toArray[Byte]
+    kf.generatePrivate(keyData)
   } toOption
 
   override def preStart = {
@@ -331,7 +334,7 @@ class Server(args: scala.Array[String]) extends Actor {
 
   def listening(announcer: Option[DatagramHandler]): Receive = {
     case c @ Connected(remote, local) =>
-      sender() ! Register(context.actorOf(Props(classOf[RequestHandler], remote.getHostString(), DB, keyGen, certificate)))
+      sender() ! Register(context.actorOf(Props(classOf[RequestHandler], remote.getHostString(), DB, key, certificate, keyGen)))
     case Unbind =>
       announcer match {
         case Some(thread) =>

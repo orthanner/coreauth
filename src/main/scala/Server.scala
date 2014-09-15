@@ -10,7 +10,7 @@ import scala.util._
 import akka.util._
 import java.sql._
 import org.apache.commons.codec.binary._
-import com.typesafe.config.ConfigFactory
+import com.typesafe.config._
 import javax.sql.DataSource
 import java.net._
 import java.nio._
@@ -57,7 +57,7 @@ trait Loader {
   }
 }
 
-class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificate: Option[Certificate], keyGen: KeyGenerator) extends Actor with Loader {
+class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificate: Option[Certificate], keyGen: KeyGenerator, config: Config) extends Actor with Loader {
   import Tcp._
   import RequestHander._
   import Crypt._
@@ -65,7 +65,7 @@ class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificat
 
   implicit val exec = context.dispatcher.asInstanceOf[Executor with ExecutionContext]
 
-  val keyFactory = KeyFactory.getInstance("RSA")
+  val keyFactory = KeyFactory.getInstance(config.getString("ssl.algorithm"))
 
   def getSession(token: String, tag: String)(implicit conn: Connection): Option[Session] = {
     val sq = conn.prepareStatement("select uid, realm from sessions where token=? and tag=?")
@@ -198,19 +198,19 @@ class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificat
 	      //decode and parse client key
 	      val clientKey = keyFactory.generatePublic(new PKCS8EncodedKeySpec(decodeBase64(cert)))
 	      //encrypt session key for client...
-	      val clientCipher = Cipher.getInstance(CIPHER_NAME)
+	      val clientCipher = Cipher.getInstance(config.getString("ssl.cipher"))
 	      clientCipher.init(Cipher.ENCRYPT_MODE, clientKey)
 	      val keyData = clientCipher.update(aesKey.getEncoded)
 	      val skey = encodeBase64(keyData)
 	      //...and sign it
-	      val signature = Signature.getInstance(SIGNATURE_ALGORITHM)
+	      val signature = Signature.getInstance(config.getString("ssl.signature"))
 	      signature.initSign(key)
 	      signature.update(keyData)
 	      val signatureData = encodeBase64(signature.sign())
 	      //create encyption and decryption ciphers for the session
-	      val encryptor = Cipher.getInstance(CIPHER_NAME)
+	      val encryptor = Cipher.getInstance("AES")
 	      encryptor.init(Cipher.ENCRYPT_MODE, aesKey)
-	      val decryptor = Cipher.getInstance(CIPHER_NAME)
+	      val decryptor = Cipher.getInstance("AES")
 	      decryptor.init(Cipher.DECRYPT_MODE, aesKey)
 	      //switch to TSL
 	      context become crypto_receive(ByteString.empty, encryptor, decryptor, "key:%s".format(encodeBase64(clientKey.getEncoded)))
@@ -277,6 +277,9 @@ class Server(args: scala.Array[String]) extends Actor with Loader {
     .withFallback(ConfigFactory.parseString("udp.interface=" + NetworkInterface.getByIndex(0).getName()))
     .withFallback(ConfigFactory.parseString("udp.port=9876"))
     .withFallback(ConfigFactory.parseString("tcp.port=9876"))
+    .withFallback(ConfigFactory.parseString("ssl.algorithm=RSA"))
+    .withFallback(ConfigFactory.parseString("ssl.cipher=RSA/ECB/OAEPWithSHA-256AndMGF1Padding"))
+    .withFallback(ConfigFactory.parseString("ssl.signature=SHA512withRSA"))
 
   lazy val DB = {
     val db = new BasicDataSource()
@@ -306,7 +309,7 @@ class Server(args: scala.Array[String]) extends Actor with Loader {
 
   lazy val key = Try {
     val in = new FileInputStream(config.getString("ssl.key"))
-    val kf = KeyFactory.getInstance("RSA")
+    val kf = KeyFactory.getInstance(config.getString("ssl.algorithm"))
     val keyData = (ByteString.empty /: (read(in) takeWhile { _._1 > 0 } map { chunk => ByteString.fromArray(chunk._2, 0, chunk._1) })) { (acc: ByteString, data: ByteString) => acc ++ data }
     kf.generatePrivate(new PKCS8EncodedKeySpec(keyData.toArray[Byte]))
   } toOption

@@ -20,7 +20,7 @@ object DatagramHandler {
   case object Unbind extends Message
 }
 
-class DatagramProcessor(handler: DatagramHandler) extends Actor {
+class DatagramProcessor extends Actor {
   import DatagramHandler._
 
   val cf = CertificateFactory.getInstance("X.509")
@@ -30,20 +30,36 @@ class DatagramProcessor(handler: DatagramHandler) extends Actor {
       val in = new ByteArrayInputStream(data.toArray[Byte])
       val certificate = cf.generateCertificate(in)
       in.close()
-      handler.append(d)
+      context.parent ! d
     }
     case Unbind => context stop self
   }
 }
 
-class DatagramHandler(system: ActorSystem, certificate: Certificate, bindAddr: InetSocketAddress, group: InetAddress, iface: NetworkInterface) extends Thread {
+class DatagramHandler(certificate: Certificate, bindAddr: InetSocketAddress, group: InetAddress, iface: NetworkInterface) extends Actor with Runnable {
   import DatagramHandler._
 
-  val alive = new AtomicBoolean(true)
+  val alive = new AtomicBoolean()
   val pending = new ConcurrentLinkedQueue[Datagram]()
 
-  def append(packet: Datagram): Unit = {
-    pending.add(packet)
+  var runner: Thread = null
+
+  val processor = context.actorOf(Props[DatagramProcessor])
+
+  override def preStart(): Unit = {
+    runner = new Thread(this)
+    alive.set(true)
+    runner.start()
+  }
+
+  override def postStop(): Unit = {
+    alive.set(false)
+    runner = null
+  }
+
+  def receive = {
+    case datagram: Datagram =>
+      pending.add(datagram)
   }
 
   override def run(): Unit = {
@@ -51,7 +67,6 @@ class DatagramHandler(system: ActorSystem, certificate: Certificate, bindAddr: I
     channel.configureBlocking(false)
     val key = channel.join(group, iface)
     val buffer = ByteBuffer.allocate(1024)
-    val processor = system.actorOf(Props(classOf[DatagramProcessor], this))
     val selector = Selector.open
     val membership = channel.register(selector, SelectionKey.OP_READ | SelectionKey.OP_WRITE, null)
     while (alive.get) {
@@ -79,10 +94,6 @@ class DatagramHandler(system: ActorSystem, certificate: Certificate, bindAddr: I
     processor ! Unbind
     key.drop
     channel.close
-  }
-
-  def kill: Unit = {
-    alive.set(false)
   }
 
 }

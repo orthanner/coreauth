@@ -325,6 +325,10 @@ class Server(args: scala.Array[String]) extends Actor with Loader {
       val announcer = certificate map { cert =>
         new DatagramHandler(cert, new InetSocketAddress(config.getInt("udp.port")), InetAddress.getByName(config.getString("udp.group")), NetworkInterface.getByName(config.getString("udp.interface")))
       }
+      announcer match {
+	case Some(thread) => thread.start()
+	case None =>
+      }
       
       context become listening(announcer)
     }
@@ -341,7 +345,7 @@ class Server(args: scala.Array[String]) extends Actor with Loader {
           thread.alive.set(false)
         case None =>
       }
-      context become receive
+      context stop self
     case _ =>
   }
 

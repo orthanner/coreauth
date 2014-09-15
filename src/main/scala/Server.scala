@@ -336,7 +336,7 @@ class Server(args: scala.Array[String]) extends Actor with Loader {
 
   def listening(announcer: Option[ActorRef]): Receive = {
     case c @ Connected(remote, local) =>
-      sender() ! Register(context.actorOf(Props(classOf[RequestHandler], remote.getHostString(), DB, key, certificate, keyGen)))
+      sender() ! Register(context.actorOf(Props(classOf[RequestHandler], remote.getHostString(), DB, key, certificate, keyGen, config)))
     case Unbind =>
       announcer match {
         case Some(ref) =>

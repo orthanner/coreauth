@@ -323,7 +323,7 @@ class Server(args: scala.Array[String]) extends Actor with Loader {
   def receive = {
     case b @ Bound(localAddress) => {
       val announcer = certificate map { cert =>
-        new DatagramHandler(cert, new InetSocketAddress(config.getInt("udp.port")), InetAddress.getByName(config.getString("udp.group")), NetworkInterface.getByName(config.getString("udp.interface")))
+        new DatagramHandler(context.system, cert, new InetSocketAddress(config.getInt("udp.port")), InetAddress.getByName(config.getString("udp.group")), NetworkInterface.getByName(config.getString("udp.interface")))
       }
       announcer match {
 	case Some(thread) => thread.start

@@ -43,8 +43,6 @@ object RequestHander {
   val ATTR_QUERY = "get (?<token>[A-F0-9]+)/(?<attr>[\\w.\\-_:]+)".r
   val ATTR_UPDATE = "set (?<token>[A-F0-9]+)/(?<attr>[\\w.\\-_:]+)=(?<value>[\\w]*|\\$)".r //$ -> delete
   val LINE_DELIMITER = Seq(13, 10)
-  val CIPHER_NAME = "RSA/ECB/OAEPWithSHA-256AndMGF1Padding"
-  val SIGNATURE_ALGORITHM = "SHA512withRSA"
 }
 
 case class Session(uid: Int, realm: String)
@@ -194,13 +192,13 @@ class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificat
 	  message match {
 	    case HANDSHAKE(cert) => {
 	      //generate session encryption key
-	      val aesKey = keyGen.generateKey
+	      val streamKey = keyGen.generateKey
 	      //decode and parse client key
 	      val clientKey = keyFactory.generatePublic(new PKCS8EncodedKeySpec(decodeBase64(cert)))
 	      //encrypt session key for client...
 	      val clientCipher = Cipher.getInstance(config.getString("ssl.cipher"))
 	      clientCipher.init(Cipher.ENCRYPT_MODE, clientKey)
-	      val keyData = clientCipher.update(aesKey.getEncoded)
+	      val keyData = clientCipher.update(streamKey.getEncoded)
 	      val skey = encodeBase64(keyData)
 	      //...and sign it
 	      val signature = Signature.getInstance(config.getString("ssl.signature"))
@@ -208,10 +206,10 @@ class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificat
 	      signature.update(keyData)
 	      val signatureData = encodeBase64(signature.sign())
 	      //create encyption and decryption ciphers for the session
-	      val encryptor = Cipher.getInstance("AES")
-	      encryptor.init(Cipher.ENCRYPT_MODE, aesKey)
-	      val decryptor = Cipher.getInstance("AES")
-	      decryptor.init(Cipher.DECRYPT_MODE, aesKey)
+	      val encryptor = Cipher.getInstance(config.getString("ssl.streamCipher"))
+	      encryptor.init(Cipher.ENCRYPT_MODE, streamKey)
+	      val decryptor = Cipher.getInstance(config.getString("ssl.streamCipher"))
+	      decryptor.init(Cipher.DECRYPT_MODE, streamKey)
 	      //switch to TSL
 	      context become crypto_receive(ByteString.empty, encryptor, decryptor, "key:%s".format(encodeBase64(clientKey.getEncoded)))
 	      //send reply
@@ -278,6 +276,7 @@ class Server(args: scala.Array[String]) extends Actor with Loader {
     .withFallback(ConfigFactory.parseString("udp.port=9876"))
     .withFallback(ConfigFactory.parseString("tcp.port=9876"))
     .withFallback(ConfigFactory.parseString("ssl.algorithm=RSA"))
+    .withFallback(ConfigFactory.parseString("ssl.streamCipher=AES"))
     .withFallback(ConfigFactory.parseString("ssl.cipher=RSA/ECB/OAEPWithSHA-256AndMGF1Padding"))
     .withFallback(ConfigFactory.parseString("ssl.signature=SHA512withRSA"))
 
@@ -293,7 +292,7 @@ class Server(args: scala.Array[String]) extends Actor with Loader {
   }
 
   lazy val keyGen = {
-    val kg = KeyGenerator.getInstance("AES")
+    val kg = KeyGenerator.getInstance(config.getString("ssl.streamCipher"))
     kg.init(256)
     kg
   }

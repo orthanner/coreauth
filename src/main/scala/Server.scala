@@ -329,7 +329,7 @@ class Server(args: scala.Array[String]) extends Actor with Loader {
 	case Some(thread) => thread.start
 	case None =>
       }
-      context become listening(announcer)
+      context.become(listening(announcer), discardOld = false)
     }
     case CommandFailed(_: Bind) => context stop self
     case _ =>
@@ -344,7 +344,7 @@ class Server(args: scala.Array[String]) extends Actor with Loader {
           thread.alive.set(false)
         case None =>
       }
-      context become receive
+      context.unbecome()
     case _ =>
   }
 

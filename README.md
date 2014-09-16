@@ -5,9 +5,9 @@ COREAUTH is an <a href="http://akka.io">Akka</a>-based network authorization ser
 The protocol is plaintext and consists of two subsets, the first for communicating between client and authentication server and the second for communicating between authentication server and network server utilizing it's functions.
 Currently, the following backend stores are supported:
 
-* <a href="http://www.postgresql.org/">PostgreSQL</a> (preferred)
-* <a href="http://mariadb.org/">MariaDB</a>
-* <a href="http://www.h2database.com/html/main.html">H2</a>
+* [PostgreSQL](http://www.postgresql.org/) (preferred)
+* [MariaDB](http://mariadb.org/)
+* [H2](http://www.h2database.com/html/main.html)
 
 Adding support for other RDBMS is as easy as adding respective driver dependencies to `build.gradle`.
 Request/reply formats, as well as table structure, can be checked in `src/main/scala/Server.scala` file (will be extracted and documented later).

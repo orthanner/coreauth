@@ -36,7 +36,7 @@ import scala.async.Async.{async, await}
 //case class Session(id: Int, user: Int, realm: Int, token: String, start: Timestamp, last: Timestamp, tag: String)
 
 object RequestHander {
-  val HANDSHAKE = "starttsl (?<cert>[\\w]+)".r
+  val HANDSHAKE = "starttls (?<cert>[\\w]+)".r
   val AUTH = "auth (?<login>[^@]+)@(?<realm>[^\\s]+) (?<password>[\\w]+)".r
   val CHECK = "check (?<token>[A-F0-9]+) (?<tag>[.:\\-\\w]+) (?<perm>[:.\\w]+)".r
   val STOP = "logout (?<token>[A-F0-9]+)".r

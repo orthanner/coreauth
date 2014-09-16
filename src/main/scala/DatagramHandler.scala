@@ -41,9 +41,7 @@ class DatagramHandler(certificate: Certificate, bindAddr: InetSocketAddress, gro
 
   val alive = new AtomicBoolean()
   val pending = new ConcurrentLinkedQueue[Datagram]()
-
   var runner: Thread = null
-
   val processor = context.actorOf(Props[DatagramProcessor])
 
   override def preStart(): Unit = {

@@ -12,6 +12,4 @@ Currently, the following backend stores are supported:
 
 Adding support for other RDBMS is as easy as adding appropriate driver dependencies to `build.gradle` and creating an SQL schema file.
 
-Request/reply format can be checked in `src/main/scala/Server.scala` file (will be extracted and documented later).
-
 For table schema for your database, please check the appropriate sql script.

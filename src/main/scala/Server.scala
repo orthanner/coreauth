@@ -66,15 +66,15 @@ class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificat
   val keyFactory = KeyFactory.getInstance(config.getString("ssl.algorithm"))
 
   def getSession(token: String, tag: String)(implicit conn: Connection): Option[Session] = {
-    val sq = conn.prepareStatement("select uid, realm from sessions where token=? and tag=?")
+    val sq = conn.prepareStatement("select user_id, realm from session where token=? and tag=?")
     sq.setString(1, token)
     sq.setString(2, tag)
     val s = sq.executeQuery
     if (s.first()) {
-      val update = conn.prepareStatement("update sessions set last=current_timestamp() where token=?")
+      val update = conn.prepareStatement("update session set last=current_timestamp() where token=?")
       update.setString(1, token)
       update.executeUpdate
-      Some(Session(s.getInt("uid"), s.getString("realm")))
+      Some(Session(s.getInt("user_id"), s.getString("realm")))
     } else
       None
   }
@@ -94,18 +94,18 @@ class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificat
 
   def auth(login: String, realm: String, password: String, tag: String)(implicit conn: Connection): String = {
     val sid = generateSecureCookie
-    val accountQuery = conn.prepareStatement("select id from users where lower(login)=? and password=?")
+    val accountQuery = conn.prepareStatement("select id from users where lower(login)=lower(?) and password=?")
     accountQuery.setString(1, login)
     accountQuery.setString(2, password)
     val rs = accountQuery.executeQuery
     if (rs.first()) {
       val uid = rs.getInt("id")
-      val realmCheck = conn.prepareStatement("select count(*)>0 from profile_permissions pp left join `profile` p on pp.profile=p.id left join user_profile up on p.id=up.profile_id where up.user_id=? and p.realm=?")
+      val realmCheck = conn.prepareStatement("select count(*)>0 from profile_permissions pp left join profile p on pp.profile=p.id left join user_profile up on p.id=up.profile_id where up.user_id=? and p.realm=?")
       realmCheck.setInt(1, uid)
       realmCheck.setString(2, realm)
       val rc = realmCheck.executeQuery
       if (rc.first() && rc.getBoolean(1)) {
-	val insert = conn.prepareStatement("insert into sessions(uid, realm, token, start, last, tag) values(?, ?, ?, current_date(), current_date(), ?)")
+	val insert = conn.prepareStatement("insert into session(uid, realm, token, tag) values(?, ?, ?, ?)")
 	insert.setInt(1, uid)
 	insert.setString(2, realm)
 	insert.setString(3, sid)
@@ -121,7 +121,7 @@ class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificat
 
   def check(token: String, tag: String, permission: String)(implicit conn: Connection): String = {
     getSession(token, tag)
-    val query = conn.prepareStatement("select count(*)>0 from profile_permissions pp left join profile p on pp.profile=p.id left join permission perm on pp.permission=perm.id left join user_profile up on p.id=up.profile_id left join `session` s on s.user_id=up.user_id where s.token=? and s.tag=? and perm.name=?")
+    val query = conn.prepareStatement("select count(*)>0 from profile_permissions pp left join profile p on pp.profile=p.id left join permission perm on pp.permission=perm.id left join user_profile up on p.id=up.profile_id left join session s on s.user_id=up.user_id where s.token=? and s.tag=? and perm.name=?")
     query.setString(1, token)
     query.setString(2, tag)
     query.setString(3, permission)
@@ -130,7 +130,7 @@ class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificat
   }
 
   def logout(token: String, tag: String)(implicit conn: Connection): String = {
-    val query = conn.prepareStatement("delete from sessions where token=? and tag=?")
+    val query = conn.prepareStatement("delete from session where token=? and tag=?")
     query.setString(1, token)
     query.setString(2, tag)
     val x = query.executeUpdate

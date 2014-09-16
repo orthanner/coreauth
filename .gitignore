@@ -3,4 +3,5 @@ target/
 build/
 .gradle/
 *.scala~
+*.sql~
 gradle-app.setting

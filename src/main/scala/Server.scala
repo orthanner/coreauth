@@ -100,15 +100,16 @@ class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificat
     val rs = accountQuery.executeQuery
     if (rs.first()) {
       val uid = rs.getInt("id")
-      val realmCheck = conn.prepareStatement("select count(*)>0 from permissions p left join realms r on p.realm=r.id where p.user=? and r.name=?")
+      val realmCheck = conn.prepareStatement("select count(*)>0 from profile_permissions pp left join `profile` p on pp.profile=p.id left join user_profile up on p.id=up.profile_id where up.user_id=? and p.realm=?")
       realmCheck.setInt(1, uid)
       realmCheck.setString(2, realm)
       val rc = realmCheck.executeQuery
       if (rc.first() && rc.getBoolean(1)) {
-	val insert = conn.prepareStatement("insert into sessions(uid, realm, token, start, last, tag) values(?, ?, current_date(), current_date(), ?)")
+	val insert = conn.prepareStatement("insert into sessions(uid, realm, token, start, last, tag) values(?, ?, ?, current_date(), current_date(), ?)")
 	insert.setInt(1, uid)
-	insert.setString(2, sid)
-	insert.setString(3, tag)
+	insert.setString(2, realm)
+	insert.setString(3, sid)
+	insert.setString(4, tag)
 	if (insert.executeUpdate() == 0)
 	  throw new SQLException("Could not create session")
       } else
@@ -120,7 +121,7 @@ class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificat
 
   def check(token: String, tag: String, permission: String)(implicit conn: Connection): String = {
     getSession(token, tag)
-    val query = conn.prepareStatement("select count(*)>0 from user_permissions up left join permissions p on up.perm_id=p.id left join sessions s on s.user_id=up.user_id where s.token=? and s.tag=? and p.name=?")
+    val query = conn.prepareStatement("select count(*)>0 from profile_permissions pp left join profile p on pp.profile=p.id left join permission perm on pp.permission=perm.id left join user_profile up on p.id=up.profile_id left join `session` s on s.user_id=up.user_id where s.token=? and s.tag=? and perm.name=?")
     query.setString(1, token)
     query.setString(2, tag)
     query.setString(3, permission)
@@ -136,8 +137,8 @@ class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificat
     if (x > 0) "+\r\n" else "-\r\n"
   }
 
-  def attr_query(token: String, attr: String)(implicit conn: Connection): String = {
-    val value = getSession(token, client) flatMap { session =>
+  def attr_query(token: String, tag: String, attr: String)(implicit conn: Connection): String = {
+    val value = getSession(token, tag) flatMap { session =>
 	val aq = conn.prepareStatement("select value from extra_attrs where name=? and user_id=?")
 	aq.setString(1, attr)
 	aq.setInt(2, session.uid)
@@ -150,11 +151,11 @@ class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificat
     "+%s\r\n".format(value.getOrElse("$"))
   }
 
-  def attr_update(token: String, name: String, value: String)(implicit conn: Connection): String = {
-    val result = getSession(token, client) match {
+  def attr_update(token: String, tag: String, name: String, value: String)(implicit conn: Connection): String = {
+    val result = getSession(token, tag) match {
       case Some(session) => {
 	if (value == "$"){
-	  var aq = conn.prepareStatement("delete where user_id=? and name=?")
+	  var aq = conn.prepareStatement("delete from extra_attrs where user_id=? and name=?")
 	  aq.setInt(1, session.uid)
 	  aq.setString(2, name)
 	  aq.executeUpdate
@@ -218,8 +219,8 @@ class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificat
 	    case AUTH(login, realm, password) => auth(login, realm, password, "ip:%s".format(client))
 	    case CHECK(token, tag, permission) => check(token, tag, permission)
 	    case STOP(token) => logout(token, "ip:%s".format(client))
-	    case ATTR_QUERY(token, attr) => attr_query(token, attr)
-	    case ATTR_UPDATE(token, name, value) => attr_update(token, name, value)
+	    case ATTR_QUERY(token, attr) => attr_query(token, "ip:%s".format(client), attr)
+	    case ATTR_UPDATE(token, name, value) => attr_update(token, "ip:%s".format(client), name, value)
 	    case _ => throw new java.lang.IllegalArgumentException("Invalid request")
 	  }
 	} andThen {
@@ -249,8 +250,8 @@ class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificat
 	    case AUTH(login, realm, password) => auth(login, realm, password, pkey)
 	    case CHECK(token, tag, permission) => check(token, tag, permission)
 	    case STOP(token) => logout(token, pkey)
-	    case ATTR_QUERY(token, attr) => attr_query(token, attr)
-	    case ATTR_UPDATE(token, name, value) => attr_update(token, name, value)
+	    case ATTR_QUERY(token, attr) => attr_query(token, pkey, attr)
+	    case ATTR_UPDATE(token, name, value) => attr_update(token, pkey, name, value)
 	    case _ => throw new java.lang.IllegalArgumentException("Invalid request")
 	  }
 	} andThen {

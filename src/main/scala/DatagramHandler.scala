@@ -18,6 +18,8 @@ object DatagramHandler {
   case class Datagram(data: ByteString, address: SocketAddress) extends Message
   case class Bind(handler: ActorRef, bindAddr: InetSocketAddress, group: InetAddress, iface: NetworkInterface) extends Message
   case object Unbind extends Message
+  case object Bound extends Message
+  case object Unbound extends Message
 }
 
 class DatagramProcessor extends Actor {
@@ -51,13 +53,13 @@ class DatagramHandler(certificate: Certificate, bindAddr: InetSocketAddress, gro
   }
 
   override def postStop(): Unit = {
-    alive.set(false)
     runner = null
   }
 
   def receive = {
     case datagram: Datagram =>
       pending.add(datagram)
+    case Unbind => alive.set(false)
   }
 
   override def run(): Unit = {
@@ -92,6 +94,7 @@ class DatagramHandler(certificate: Certificate, bindAddr: InetSocketAddress, gro
     processor ! Unbind
     key.drop
     channel.close
+    context stop self
   }
 
 }

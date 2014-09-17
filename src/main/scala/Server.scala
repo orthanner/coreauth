@@ -24,16 +24,7 @@ import java.io.{ InputStream, FileInputStream, IOException, FileNotFoundExceptio
 import rx.lang.scala._
 import rx.lang.scala.subjects._
 import ExecutionContext.Implicits.global
-import scala.async.Async.{async, await}
-
-//case class User(id: Int, login: String, password: String)
-//case class Realm(id: Int, name: String)
-//case class UserAttr(user: Int, name: String, value: String)
-//case class Permission(id: Int, name: String)
-//case class Profile(id: Int, realm: Int, name: String)
-//case class ProfileMapping(user: Int, profile: Int)
-//case class PermissionMapping(profile: Int, permission: Int)
-//case class Session(id: Int, user: Int, realm: Int, token: String, start: Timestamp, last: Timestamp, tag: String)
+import scala.async.Async.{ async, await }
 
 object RequestHander {
   val HANDSHAKE = "starttls (?<cert>[\\w]+)".r
@@ -340,7 +331,7 @@ class Server(args: scala.Array[String]) extends Actor with Loader {
     case Unbind =>
       announcer match {
         case Some(ref) =>
-          ref ! PoisonPill
+          ref ! DatagramHandler.Unbind
         case None =>
       }
       context.unbecome()

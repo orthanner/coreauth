@@ -22,7 +22,7 @@ object DatagramHandler {
   case object Unbound extends Message
 }
 
-class DatagramProcessor extends Actor {
+class DatagramProcessor(certificate: Certificate) extends Actor {
   import DatagramHandler._
 
   val cf = CertificateFactory.getInstance("X.509")
@@ -30,9 +30,10 @@ class DatagramProcessor extends Actor {
   def receive = {
     case d @ Datagram(data, client) => {
       val in = new ByteArrayInputStream(data.toArray[Byte])
-      val certificate = cf.generateCertificate(in)
+      val submittedCertificate = cf.generateCertificate(in)
       in.close()
-      context.parent ! d
+      if (certificate.equals(submittedCertificate))
+	context.parent ! d
     }
     case Unbind => context stop self
   }
@@ -44,7 +45,7 @@ class DatagramHandler(certificate: Certificate, bindAddr: InetSocketAddress, gro
   val alive = new AtomicBoolean()
   val pending = new ConcurrentLinkedQueue[Datagram]()
   var runner: Thread = null
-  val processor = context.actorOf(Props[DatagramProcessor])
+  val processor = context.actorOf(Props(classOf[DatagramProcessor], certificate))
 
   override def preStart(): Unit = {
     runner = new Thread(this)
@@ -76,6 +77,7 @@ class DatagramHandler(certificate: Certificate, bindAddr: InetSocketAddress, gro
             case client: SocketAddress => {
 	      buffer.flip()
 	      processor ! Datagram(ByteString(buffer), client)
+	      buffer.clear()
 	    }
             case null =>
 	  }

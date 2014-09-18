@@ -264,13 +264,14 @@ class Server(args: scala.Array[String]) extends Actor with Loader {
   import context.system
 
   lazy val config = ConfigFactory.parseFile(new java.io.File(if(args.length > 0) args(0) else "coreauth.conf"))
-    .withFallback(ConfigFactory.parseString("udp.interface=" + NetworkInterface.getByIndex(0).getName()))
+    .withFallback(ConfigFactory.parseString("udp.iface=" + NetworkInterface.getByIndex(0).getName()))
     .withFallback(ConfigFactory.parseString("udp.port=9876"))
     .withFallback(ConfigFactory.parseString("tcp.port=9876"))
     .withFallback(ConfigFactory.parseString("ssl.algorithm=RSA"))
     .withFallback(ConfigFactory.parseString("ssl.streamCipher=AES"))
     .withFallback(ConfigFactory.parseString("ssl.cipher=RSA/ECB/OAEPWithSHA-256AndMGF1Padding"))
     .withFallback(ConfigFactory.parseString("ssl.signature=SHA512withRSA"))
+    .withFallback(ConfigFactory.parseString("jdbc.connLimit=16"))
 
   lazy val DB = {
     val db = new BasicDataSource()
@@ -317,7 +318,7 @@ class Server(args: scala.Array[String]) extends Actor with Loader {
   def receive = {
     case b @ Bound(localAddress) => {
       val announcer = certificate map { cert =>
-        context.actorOf(Props(classOf[DatagramHandler], cert, new InetSocketAddress(config.getInt("udp.port")), InetAddress.getByName(config.getString("udp.group")), NetworkInterface.getByName(config.getString("udp.interface"))))
+        context.actorOf(Props(classOf[DatagramHandler], cert, new InetSocketAddress(config.getInt("udp.port")), InetAddress.getByName(config.getString("udp.group")), NetworkInterface.getByName(config.getString("udp.iface"))))
       }
       context.become(listening(announcer), discardOld = false)
     }

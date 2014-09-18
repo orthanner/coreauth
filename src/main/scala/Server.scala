@@ -46,7 +46,7 @@ trait Loader {
   }
 }
 
-class RequestHandler(client: String, DB: DataSource, key: Try[PrivateKey], certificate: Try[Certificate], keyGen: KeyGenerator, config: Config) extends Actor with Loader with ActorLogging {
+class RequestHandler(client: String, DB: DataSource, key: Try[PrivateKey], keyGen: KeyGenerator, config: Config) extends Actor with Loader with ActorLogging {
   import Tcp._
   import RequestHander._
   import Crypt._
@@ -336,7 +336,7 @@ class Server(args: scala.Array[String]) extends Actor with Loader with ActorLogg
 
   def listening(announcer: Option[ActorRef]): Receive = {
     case c @ Connected(remote, local) =>
-      sender() ! Register(context.actorOf(Props(classOf[RequestHandler], remote.getHostString(), DB, key, certificate, keyGen, config)))
+      sender() ! Register(context.actorOf(Props(classOf[RequestHandler], remote.getHostString(), DB, key, keyGen, config)))
     case Unbind =>
       announcer match {
         case Some(ref) =>

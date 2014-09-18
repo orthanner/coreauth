@@ -46,7 +46,7 @@ trait Loader {
   }
 }
 
-class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificate: Option[Certificate], keyGen: KeyGenerator, config: Config) extends Actor with Loader {
+class RequestHandler(client: String, DB: DataSource, key: Try[PrivateKey], certificate: Try[Certificate], keyGen: KeyGenerator, config: Config) extends Actor with Loader with ActorLogging {
   import Tcp._
   import RequestHander._
   import Crypt._
@@ -183,29 +183,37 @@ class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificat
 	async {
 	  message match {
 	    case HANDSHAKE(cert) => {
-	      //generate session encryption key
-	      val streamKey = keyGen.generateKey
-	      //decode and parse client key
-	      val clientKey = keyFactory.generatePublic(new PKCS8EncodedKeySpec(decodeBase64(cert)))
-	      //encrypt session key for client...
-	      val clientCipher = Cipher.getInstance(config.getString("ssl.cipher"))
-	      clientCipher.init(Cipher.ENCRYPT_MODE, clientKey)
-	      val keyData = clientCipher.update(streamKey.getEncoded)
-	      val skey = encodeBase64(keyData)
-	      //...and sign it
-	      val signature = Signature.getInstance(config.getString("ssl.signature"))
-	      signature.initSign(key)
-	      signature.update(keyData)
-	      val signatureData = encodeBase64(signature.sign())
-	      //create encyption and decryption ciphers for the session
-	      val encryptor = Cipher.getInstance(config.getString("ssl.streamCipher"))
-	      encryptor.init(Cipher.ENCRYPT_MODE, streamKey)
-	      val decryptor = Cipher.getInstance(config.getString("ssl.streamCipher"))
-	      decryptor.init(Cipher.DECRYPT_MODE, streamKey)
-	      //switch to TSL
-	      context become crypto_receive(ByteString.empty, encryptor, decryptor, "key:%s".format(encodeBase64(clientKey.getEncoded)))
-	      //send reply
-	      "+%s %s\r\n".format(skey, signatureData)
+	      key match {
+		case Success(k) => {
+		  //generate session encryption key
+		  val streamKey = keyGen.generateKey
+		  //decode and parse client key
+		  val clientKey = keyFactory.generatePublic(new PKCS8EncodedKeySpec(decodeBase64(cert)))
+		  //encrypt session key for client...
+		  val clientCipher = Cipher.getInstance(config.getString("ssl.cipher"))
+		  clientCipher.init(Cipher.ENCRYPT_MODE, clientKey)
+		  val keyData = clientCipher.update(streamKey.getEncoded)
+		  val skey = encodeBase64(keyData)
+		  //...and sign it
+		  val signature = Signature.getInstance(config.getString("ssl.signature"))
+		  signature.initSign(k)
+		  signature.update(keyData)
+		  val signatureData = encodeBase64(signature.sign())
+		  //create encyption and decryption ciphers for the session
+		  val encryptor = Cipher.getInstance(config.getString("ssl.streamCipher"))
+		  encryptor.init(Cipher.ENCRYPT_MODE, streamKey)
+		  val decryptor = Cipher.getInstance(config.getString("ssl.streamCipher"))
+		  decryptor.init(Cipher.DECRYPT_MODE, streamKey)
+		  //switch to TSL
+		  context become crypto_receive(ByteString.empty, encryptor, decryptor, "key:%s".format(encodeBase64(clientKey.getEncoded)))
+		  //send reply
+		  "+%s %s\r\n".format(skey, signatureData)
+		}
+		case Failure(error) => {
+		  log.error("Failed to load key", error)
+		  "-%s: %s\r\n".format(error.getClass().getName(), error.getMessage())
+		}
+	      }
 	    }
 	    case AUTH(login, realm, password) => auth(login, realm, password, "ip:%s".format(client))
 	    case CHECK(token, tag, permission) => check(token, tag, permission)
@@ -259,7 +267,7 @@ class RequestHandler(client: String, DB: DataSource, key: PrivateKey, certificat
 
 }
 
-class Server(args: scala.Array[String]) extends Actor with Loader {
+class Server(args: scala.Array[String]) extends Actor with Loader with ActorLogging {
   import Tcp._
   import context.system
 
@@ -297,14 +305,14 @@ class Server(args: scala.Array[String]) extends Actor with Loader {
     val cert = cf.generateCertificate(in)
     in.close()
     cert
-  } toOption
+  }
 
   lazy val key = Try {
     val in = new FileInputStream(config.getString("ssl.key"))
     val kf = KeyFactory.getInstance(config.getString("ssl.algorithm"))
     val keyData = (ByteString.empty /: (read(in) takeWhile { _._1 > 0 } map { chunk => ByteString.fromArray(chunk._2, 0, chunk._1) })) { (acc: ByteString, data: ByteString) => acc ++ data }
     kf.generatePrivate(new PKCS8EncodedKeySpec(keyData.toArray[Byte]))
-  } toOption
+  }
 
   override def preStart = {
     IO(Tcp) ! Bind(self, new InetSocketAddress(config.getInt("tcp.port")))
@@ -320,7 +328,7 @@ class Server(args: scala.Array[String]) extends Actor with Loader {
       val announcer = certificate map { cert =>
         context.actorOf(Props(classOf[DatagramHandler], cert, new InetSocketAddress(config.getInt("udp.port")), InetAddress.getByName(config.getString("udp.group")), NetworkInterface.getByName(config.getString("udp.iface"))))
       }
-      context.become(listening(announcer), discardOld = false)
+      context.become(listening(announcer.toOption), discardOld = false)
     }
     case CommandFailed(_: Bind) => context stop self
     case _ =>

@@ -320,7 +320,7 @@ class Server(args: scala.Array[String]) extends Actor with Loader with ActorLogg
 
   override def postStop = {
     IO(Tcp) ! Unbind
-    context become receive
+    context.unbecome()
   }
   
   def getInterface(name: String): Try[NetworkInterface] = Try {

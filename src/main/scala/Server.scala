@@ -338,20 +338,20 @@ class Server(args: scala.Array[String]) extends Actor with Loader with ActorLogg
           context.actorOf(Props(classOf[DatagramHandler], cert, new InetSocketAddress(config.getInt("udp.port")), InetAddress.getByName(config.getString("udp.group")), iface))
         }
       }
-      context.become(listening(announcer.toOption), discardOld = false)
+      context.become(listening(announcer), discardOld = false)
     }
     case CommandFailed(_: Bind) => context stop self
     case _ =>
   }
 
-  def listening(announcer: Option[ActorRef]): Receive = {
+  def listening(announcer: Try[ActorRef]): Receive = {
     case c @ Connected(remote, local) =>
       sender() ! Register(context.actorOf(Props(classOf[RequestHandler], remote.getHostString(), DB, key, keyGen, config)))
     case Unbind =>
       announcer match {
-        case Some(ref) =>
+        case Success(ref) =>
           ref ! DatagramHandler.Unbind
-        case None =>
+        case Failure(_) =>
       }
       context.unbecome()
     case _ =>

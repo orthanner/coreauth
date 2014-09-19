@@ -323,10 +323,20 @@ class Server(args: scala.Array[String]) extends Actor with Loader with ActorLogg
     context become receive
   }
   
+  def getInterface(name: String): Try[NetworkInterface] = Try {
+    NetworkInterface.getByName(name)
+  } recover {
+    case e => NetworkInterface.getByInetAddress(java.net.InetAddress.getByName(name))
+  } recover {
+    case e => NetworkInterface.getByIndex(Integer.parseInt(name))
+  }
+
   def receive = {
     case b @ Bound(localAddress) => {
-      val announcer = certificate map { cert =>
-        context.actorOf(Props(classOf[DatagramHandler], cert, new InetSocketAddress(config.getInt("udp.port")), InetAddress.getByName(config.getString("udp.group")), NetworkInterface.getByName(config.getString("udp.iface"))))
+      val announcer = certificate flatMap { cert =>
+	getInterface(config.getString("udp.iface")) map { iface =>
+          context.actorOf(Props(classOf[DatagramHandler], cert, new InetSocketAddress(config.getInt("udp.port")), InetAddress.getByName(config.getString("udp.group")), iface))
+        }
       }
       context.become(listening(announcer.toOption), discardOld = false)
     }

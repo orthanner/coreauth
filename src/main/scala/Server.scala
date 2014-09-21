@@ -311,6 +311,7 @@ class Server(args: scala.Array[String]) extends Actor with Loader with ActorLogg
     val in = new FileInputStream(config.getString("ssl.key"))
     val kf = KeyFactory.getInstance(config.getString("ssl.algorithm"))
     val keyData = (ByteString.empty /: (read(in) takeWhile { _._1 > 0 } map { chunk => ByteString.fromArray(chunk._2, 0, chunk._1) })) { (acc: ByteString, data: ByteString) => acc ++ data }
+    in.close()
     kf.generatePrivate(new PKCS8EncodedKeySpec(keyData.toArray[Byte]))
   }
 

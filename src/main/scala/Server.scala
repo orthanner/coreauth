@@ -72,10 +72,6 @@ class RequestHandler(client: String, DB: DataSource, key: Try[PrivateKey], keyGe
 
   def receive = raw_receive(ByteString.empty)
 
-  def decrypt(data: ByteString): ByteString = {
-    data
-  }
-
   def encrypt(data: ByteString, cipher: Cipher): ByteString = {
     val in = data.toByteBuffer
     val out = ByteBuffer.allocate(cipher.getOutputSize(in.limit()))
@@ -204,7 +200,7 @@ class RequestHandler(client: String, DB: DataSource, key: Try[PrivateKey], keyGe
 		  encryptor.init(Cipher.ENCRYPT_MODE, streamKey)
 		  val decryptor = Cipher.getInstance(config.getString("ssl.streamCipher"))
 		  decryptor.init(Cipher.DECRYPT_MODE, streamKey)
-		  //switch to TSL
+		  //switch to TLS
 		  context become crypto_receive(ByteString.empty, encryptor, decryptor, "key:%s".format(encodeBase64(clientKey.getEncoded)))
 		  //send reply
 		  "+%s %s\r\n".format(skey, signatureData)

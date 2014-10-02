@@ -13,6 +13,7 @@ import java.util.concurrent._
 import java.util.concurrent.atomic._
 import java.util.concurrent.locks._
 import scala.async.Async.{ async, await }
+import scala.concurrent.ExecutionContext.Implicits.global
 
 object DatagramHandler {
   sealed class Message

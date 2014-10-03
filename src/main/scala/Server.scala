@@ -32,6 +32,7 @@ object RequestHander {
   val CHECK = "check (?<token>[A-F0-9]+) (?<tag>[.:\\-\\w]+) (?<perm>[:.\\w]+)".r
   val STOP = "logout (?<token>[A-F0-9]+)".r
   val ATTR_QUERY = "get (?<token>[A-F0-9]+)/(?<attr>[\\w.\\-_:]+)".r
+  val ATTR_QUERY_EXTERNAL = "get (?<token>[A-F0-9]+)@(?<tag>(?:ip|key):[^/]+)/(?<attr>[\\w.\\-_:]+)".r
   val ATTR_UPDATE = "set (?<token>[A-F0-9]+)/(?<attr>[\\w.\\-_:]+)=(?<value>[\\w]*|\\$)".r //$ -> delete
   val LINE_DELIMITER = Seq(13, 10)
 }
@@ -215,6 +216,7 @@ class RequestHandler(client: String, DB: DataSource, key: Try[PrivateKey], keyGe
 	    case CHECK(token, tag, permission) => check(token, tag, permission)
 	    case STOP(token) => logout(token, "ip:%s".format(client))
 	    case ATTR_QUERY(token, attr) => attr_query(token, "ip:%s".format(client), attr)
+	    case ATTR_QUERY_EXTERNAL(token, tag, attr) => attr_query(token, tag, attr)
 	    case ATTR_UPDATE(token, name, value) => attr_update(token, "ip:%s".format(client), name, value)
 	    case _ => throw new java.lang.IllegalArgumentException("Invalid request")
 	  }
@@ -246,6 +248,7 @@ class RequestHandler(client: String, DB: DataSource, key: Try[PrivateKey], keyGe
 	    case CHECK(token, tag, permission) => check(token, tag, permission)
 	    case STOP(token) => logout(token, pkey)
 	    case ATTR_QUERY(token, attr) => attr_query(token, pkey, attr)
+	    case ATTR_QUERY_EXTERNAL(token, tag, attr) => attr_query(token, tag, attr)
 	    case ATTR_UPDATE(token, name, value) => attr_update(token, pkey, name, value)
 	    case _ => throw new java.lang.IllegalArgumentException("Invalid request")
 	  }

@@ -126,17 +126,19 @@ class RequestHandler(client: String, DB: DataSource, key: Try[PrivateKey], keyGe
   }
 
   def attr_query(token: String, tag: String, attr: String)(implicit conn: Connection): String = {
-    val value = getSession(token, tag) flatMap { session =>
+    getSession(token, tag) map { session =>
 	val aq = conn.prepareStatement("select value from extra_attrs where name=? and user_id=?")
 	aq.setString(1, attr)
 	aq.setInt(2, session.uid)
 	val result = aq.executeQuery
 	if (result.first())
-	  Option(encodeBase64String(result.getString("value").getBytes("UTF-8")))
+	  encodeBase64String(result.getString("value").getBytes("UTF-8"))
 	else
-	  None
+	  "$"
+    } match {
+      case Some(v) => "+%s\r\n".format(v)
+      case None => "-\r\n"
     }
-    "+%s\r\n".format(value.getOrElse("$"))
   }
 
   def attr_update(token: String, tag: String, name: String, value: String)(implicit conn: Connection): String = {

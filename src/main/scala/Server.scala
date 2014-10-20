@@ -20,7 +20,7 @@ import javax.crypto._
 import java.security.{ Key, PrivateKey, PublicKey, KeyFactory, Signature }
 import java.security.cert._
 import java.security.spec._
-import java.io.{ InputStream, FileInputStream, IOException, FileNotFoundException }
+import java.io.{ InputStream, FileInputStream, IOException, FileNotFoundException, InputStreamReader, Reader }
 import rx.lang.scala._
 import rx.lang.scala.subjects._
 import ExecutionContext.Implicits.global
@@ -29,21 +29,28 @@ import scala.async.Async.{ async, await }
 object RequestHander {
   val HANDSHAKE = "starttls (?<cert>[\\w]+)".r
   val AUTH = "auth (?<login>[^@]+)@(?<realm>[^\\s]+) (?<password>[\\w]+)".r
-  val CHECK = "check (?<token>[A-F0-9]+) (?<tag>[.:\\-\\w]+) (?<perm>[:.\\w]+)".r
-  val STOP = "logout (?<token>[A-F0-9]+)".r
-  val ATTR_QUERY = "get (?<token>[A-F0-9]+)/(?<attr>[\\w.\\-_:]+)".r
-  val ATTR_QUERY_EXTERNAL = "get (?<token>[A-F0-9]+)@(?<tag>(?:ip|key):[^/]+)/(?<attr>[\\w.\\-_:]+)".r
-  val ATTR_UPDATE = "set (?<token>[A-F0-9]+)/(?<attr>[\\w.\\-_:]+)=(?<value>[\\w]*|\\$)".r //$ -> delete
+  val CHECK = "check (?<token>[A-Fa-f0-9]+) (?<tag>[.:\\-\\w]+) (?<perm>[:.\\w]+)".r
+  val STOP = "logout (?<token>[A-Fa-f0-9]+)".r
+  val ATTR_QUERY = "get (?<token>[A-Fa-f0-9]+)/(?<attr>[\\w.\\-_:]+)".r
+  val ATTR_QUERY_EXTERNAL = "get (?<token>[A-Fa-f0-9]+)@(?<tag>(?:ip|key):[^/]+)/(?<attr>[\\w.\\-_:]+)".r
+  val ATTR_UPDATE = "set (?<token>[A-Fa-f0-9]+)/(?<attr>[\\w.\\-_:]+)=(?<value>[\\w]*|\\$)".r //$ -> null
+  val ATTR_DELETE = "unset (?<token>[A-Fa-f0-9]+)/(?<attr>[\\w.\\-_:]+)".r
   val LINE_DELIMITER = Seq(13, 10)
 }
 
 case class Session(uid: Int, realm: String)
 
 trait Loader {
-  def read(fileIn: InputStream): Stream[(Int, scala.Array[Byte])] = {
+  def read(in: InputStream): Stream[(Int, scala.Array[Byte])] = {
     val bytes = scala.Array.fill[Byte](1024)(0)
-    val length = fileIn.read(bytes)
-    (length, bytes) #:: read(fileIn)
+    val length = in.read(bytes)
+    (length, bytes.slice(0, length)) #:: read(in)
+  }
+
+  def read(in: Reader): Stream[(Int, scala.Array[Char])] = {
+    val buf = scala.Array.fill[Char](1024)(0)
+    val length = in.read(buf)
+    (length, buf.slice(0, length)) #:: read(in)
   }
 }
 
@@ -93,17 +100,17 @@ class RequestHandler(client: String, DB: DataSource, key: Try[PrivateKey], keyGe
       realmCheck.setString(2, realm)
       val rc = realmCheck.executeQuery
       if (rc.first() && rc.getBoolean(1)) {
-	val insert = conn.prepareStatement("insert into session(uid, realm, token, tag) values(?, ?, ?, ?)")
-	insert.setInt(1, uid)
-	insert.setString(2, realm)
-	insert.setString(3, sid)
-	insert.setString(4, tag)
-	if (insert.executeUpdate() == 0)
-	  throw new SQLException("Could not create session")
+      	val insert = conn.prepareStatement("insert into session(uid, realm, token, tag) values(?, ?, ?, ?)")
+      	insert.setInt(1, uid)
+      	insert.setString(2, realm)
+      	insert.setString(3, sid)
+      	insert.setString(4, tag)
+      	if (insert.executeUpdate() == 0)
+      	  throw new SQLException("Could not create session")
+        } else
+        	throw new java.security.AccessControlException("Specified user cannot access this realm")
       } else
-	throw new java.security.AccessControlException("Specified user cannot access this realm")
-    } else
-      throw new java.security.AccessControlException("Invalid credentials")
+        throw new java.security.AccessControlException("Invalid credentials")
     "+%s\r\n".format(sid)
   }
 
@@ -127,46 +134,73 @@ class RequestHandler(client: String, DB: DataSource, key: Try[PrivateKey], keyGe
 
   def attr_query(token: String, tag: String, attr: String)(implicit conn: Connection): String = {
     getSession(token, tag) map { session =>
-	val aq = conn.prepareStatement("select value from extra_attrs where name=? and user_id=?")
-	aq.setString(1, attr)
-	aq.setInt(2, session.uid)
-	val result = aq.executeQuery
-	if (result.first())
-	  encodeBase64String(result.getString("value").getBytes("UTF-8"))
-	else
-	  "$"
+    	val aq = conn.prepareStatement("select \"type\", value from extra_attrs where name=? and user_id=?")
+    	aq.setString(1, attr)
+    	aq.setInt(2, session.uid)
+    	val result = aq.executeQuery
+    	if (result.first()) {
+        val in = result.getCharacterStream("value")
+        val sb = ((new StringBuilder()) /: (read(in) takeWhile { _._1 != -1 } map { _._2 })) (_.append(_))
+        in.close()
+        val t = result.getString("type")
+        val value = t match {
+          case "text" => ByteString(encodeBase64String(sb.toString.getBytes("UTF-8")))
+          case _ => sb.toString
+        }
+    	  "%s:%s".format(t, value)
+      }
+    	else
+    	  "$"
     } match {
       case Some(v) => "+%s\r\n".format(v)
       case None => "-\r\n"
     }
   }
 
-  def attr_update(token: String, tag: String, name: String, value: String)(implicit conn: Connection): String = {
-    val result = getSession(token, tag) match {
+  def attr_update(token: String, tag: String, name: String, t: String, value: String)(implicit conn: Connection): String = {
+    getSession(token, tag) match {
       case Some(session) => {
-	if (value == "$"){
-	  var aq = conn.prepareStatement("delete from extra_attrs where user_id=? and name=?")
-	  aq.setInt(1, session.uid)
-	  aq.setString(2, name)
-	  aq.executeUpdate
-	} else { 
-	  var aq = conn.prepareStatement("update extra_attrs set value=? where user_id=? and name=?")
-	  aq.setString(1, ByteString(decodeBase64(value)).utf8String)
-	  aq.setInt(2, session.uid)
-	  aq.setString(3, name)
-	  if (aq.executeUpdate == 0) {
-	    aq = conn.prepareStatement("insert into extra_attrs(user_id, name, value) values (?, ?, ?)")
-	    aq.setString(1, ByteString(decodeBase64(value)).utf8String)
-	    aq.setInt(2, session.uid)
-	    aq.setString(3, name)
-	    aq.executeUpdate
-	  } else
-	    1
-	}
+        var aq = conn.prepareStatement("update extra_attrs set value=?, type=? where user_id=? and name=?")
+        val clob = conn.createClob
+        clob.setString(1, t match {
+            case "text" => ByteString(decodeBase64(value)).utf8String
+            case _ => value
+        })
+        aq.setClob(1, clob)
+        aq.setString(2, t)
+        aq.setInt(3, session.uid)
+        aq.setString(4, name)
+        val result = if (aq.executeUpdate == 0) {
+          aq = conn.prepareStatement("insert into extra_attrs(user_id, name, type, value) values (?, ?, ?, ?)")
+        val clob = conn.createClob
+        clob.setString(1, t match {
+            case "text" => ByteString(decodeBase64(value)).utf8String
+            case _ => value
+        })
+        aq.setInt(1, session.uid)
+        aq.setString(2, name)
+        aq.setString(3, t)
+        aq.setClob(4, clob)
+        aq.executeUpdate
+        } else
+          1
+        "+%s\r\n".format(String.valueOf(result))
       }
-      case None => 0
+      case None => "-\r\n"
     }
-    "+%s\r\n".format(String.valueOf(result))
+    
+  }
+
+  def attr_delete(token: String, tag: String, name: String)(implicit conn: Connection): String = {
+    getSession(token, tag) match {
+      case Some(session) => {
+        var aq = conn.prepareStatement("delete from extra_attrs where user_id=? and name=?")
+        aq.setInt(1, session.uid)
+        aq.setString(2, name)
+        "+%s\r\n".format(String.valueOf(aq.executeUpdate))
+      }
+      case None => "-\r\n"
+    }
   }
 
   def raw_receive(data: ByteString): Receive = {
@@ -174,62 +208,63 @@ class RequestHandler(client: String, DB: DataSource, key: Try[PrivateKey], keyGe
       val content = data ++ input
       val pos = content.indexOfSlice(LINE_DELIMITER)
       if (pos >= 0) {
-	val msg = content.slice(0, pos)
-	context become raw_receive(content.drop(msg.length + 2))
-	val message = msg.utf8String.trim()
-	val src = sender()
-	implicit val conn = DB.getConnection
-	async {
-	  message match {
-	    case HANDSHAKE(cert) => {
-	      key match {
-		case Success(k) => {
-		  //generate session encryption key
-		  val streamKey = keyGen.generateKey
-		  //decode and parse client key
-		  val clientKey = keyFactory.generatePublic(new PKCS8EncodedKeySpec(decodeBase64(cert)))
-		  //encrypt session key for client...
-		  val clientCipher = Cipher.getInstance(config.getString("ssl.cipher"))
-		  clientCipher.init(Cipher.ENCRYPT_MODE, clientKey)
-		  val keyData = clientCipher.update(streamKey.getEncoded)
-		  val skey = encodeBase64(keyData)
-		  //...and sign it
-		  val signature = Signature.getInstance(config.getString("ssl.signature"))
-		  signature.initSign(k)
-		  signature.update(keyData)
-		  val signatureData = encodeBase64(signature.sign())
-		  //create encyption and decryption ciphers for the session
-		  val encryptor = Cipher.getInstance(config.getString("ssl.streamCipher"))
-		  encryptor.init(Cipher.ENCRYPT_MODE, streamKey)
-		  val decryptor = Cipher.getInstance(config.getString("ssl.streamCipher"))
-		  decryptor.init(Cipher.DECRYPT_MODE, streamKey)
-		  //switch to TLS
-		  context become crypto_receive(ByteString.empty, encryptor, decryptor, "key:%s".format(encodeBase64(clientKey.getEncoded)))
-		  //send reply
-		  "+%s %s\r\n".format(skey, signatureData)
-		}
-		case Failure(error) => {
-		  log.error("Failed to load key", error)
-		  "-%s: %s\r\n".format(error.getClass().getName(), error.getMessage())
-		}
-	      }
-	    }
-	    case AUTH(login, realm, password) => auth(login, realm, password, "ip:%s".format(client))
-	    case CHECK(token, tag, permission) => check(token, tag, permission)
-	    case STOP(token) => logout(token, "ip:%s".format(client))
-	    case ATTR_QUERY(token, attr) => attr_query(token, "ip:%s".format(client), attr)
-	    case ATTR_QUERY_EXTERNAL(token, tag, attr) => attr_query(token, tag, attr)
-	    case ATTR_UPDATE(token, name, value) => attr_update(token, "ip:%s".format(client), name, value)
-	    case _ => throw new java.lang.IllegalArgumentException("Invalid request")
-	  }
-	} andThen {
-	  case r => conn.close
-	} onComplete {
-	  case Success(data) => src ! Write(ByteString(data))
-	  case Failure(error) => src ! Write(ByteString("-%s:%s\r\n".format(error.getClass().getName(), error.getMessage())))
-	}
+        	val msg = content.slice(0, pos)
+        	context become raw_receive(content.drop(msg.length + LINE_DELIMITER.size))
+        	val message = msg.utf8String.trim()
+        	val src = sender()
+        	implicit val conn = DB.getConnection
+        	async {
+        	  message match {
+        	    case HANDSHAKE(cert) => {
+        	      key match {
+              		case Success(k) => {
+              		  //generate session encryption key
+              		  val streamKey = keyGen.generateKey
+              		  //decode and parse client key
+              		  val clientKey = keyFactory.generatePublic(new PKCS8EncodedKeySpec(decodeBase64(cert)))
+              		  //encrypt session key for client...
+              		  val clientCipher = Cipher.getInstance(config.getString("ssl.cipher"))
+              		  clientCipher.init(Cipher.ENCRYPT_MODE, clientKey)
+              		  val keyData = clientCipher.update(streamKey.getEncoded)
+              		  val skey = encodeBase64(keyData)
+              		  //...and sign it
+              		  val signature = Signature.getInstance(config.getString("ssl.signature"))
+              		  signature.initSign(k)
+              		  signature.update(keyData)
+              		  val signatureData = encodeBase64(signature.sign())
+              		  //create encyption and decryption ciphers for the session
+              		  val encryptor = Cipher.getInstance(config.getString("ssl.streamCipher"))
+              		  encryptor.init(Cipher.ENCRYPT_MODE, streamKey)
+              		  val decryptor = Cipher.getInstance(config.getString("ssl.streamCipher"))
+              		  decryptor.init(Cipher.DECRYPT_MODE, streamKey)
+              		  //switch to TLS
+              		  context become crypto_receive(ByteString.empty, encryptor, decryptor, "key:%s".format(encodeBase64(clientKey.getEncoded)))
+              		  //send reply
+              		  "+%s %s\r\n".format(skey, signatureData)
+              		}
+              		case Failure(error) => {
+              		  log.error("Failed to load key", error)
+              		  "-%s: %s\r\n".format(error.getClass().getName(), error.getMessage())
+              		}
+      	      }
+      	    }
+      	    case AUTH(login, realm, password) => auth(login, realm, password, "ip:%s".format(client))
+      	    case CHECK(token, tag, permission) => check(token, tag, permission)
+      	    case STOP(token) => logout(token, "ip:%s".format(client))
+            case ATTR_QUERY(token, attr) => attr_query(token, "ip:%s".format(client), attr)
+      	    case ATTR_QUERY_EXTERNAL(token, tag, attr) => attr_query(token, tag, attr)
+      	    case ATTR_UPDATE(token, name, t, value) => attr_update(token, "ip:%s".format(client), name, t, value)
+            case ATTR_DELETE(token, attr) => attr_delete(token, "ip:%s".format(client), attr)
+      	    case _ => throw new java.lang.IllegalArgumentException("Invalid request")
+      	  }
+      	} andThen {
+      	  case r => conn.close
+      	} onComplete {
+      	  case Success(data) => src ! Write(ByteString(data))
+      	  case Failure(error) => src ! Write(ByteString("-%s:%s\r\n".format(error.getClass().getName(), error.getMessage())))
+      	}
       } else
-	context become raw_receive(content)
+      	context become raw_receive(content)
     }
     case PeerClosed     => context stop self
   }
@@ -237,35 +272,35 @@ class RequestHandler(client: String, DB: DataSource, key: Try[PrivateKey], keyGe
   def crypto_receive(data: ByteString, encryptor: Cipher, decryptor: Cipher, pkey: String): Receive = {
     case Received(input) => {
       val content = data ++ encrypt(input, decryptor)
-      val pos = content.indexOfSlice(Seq(13, 10))
+      val pos = content.indexOfSlice(LINE_DELIMITER)
       if (pos >= 0) {
-	val msg = content.slice(0, pos)
-	context become crypto_receive(content.drop(msg.length + 2), encryptor, decryptor, pkey)
-	val message = msg.utf8String.trim()
-	val src = sender()
-	implicit val conn = DB.getConnection
-	async {
-	  message match {
-	    case AUTH(login, realm, password) => auth(login, realm, password, pkey)
-	    case CHECK(token, tag, permission) => check(token, tag, permission)
-	    case STOP(token) => logout(token, pkey)
-	    case ATTR_QUERY(token, attr) => attr_query(token, pkey, attr)
-	    case ATTR_QUERY_EXTERNAL(token, tag, attr) => attr_query(token, tag, attr)
-	    case ATTR_UPDATE(token, name, value) => attr_update(token, pkey, name, value)
-	    case _ => throw new java.lang.IllegalArgumentException("Invalid request")
-	  }
-	} andThen {
-	  case r => conn.close()
-	} onComplete {
-	  case Success(data) => src ! Write(encrypt(ByteString(data), encryptor))
-	  case Failure(error) => src ! Write(encrypt(ByteString("-%s:%s\r\n".format(error.getClass().getName(), error.getMessage())), encryptor))
-	}
+      	val msg = content.slice(0, pos)
+      	context become crypto_receive(content.drop(msg.length + LINE_DELIMITER.size), encryptor, decryptor, pkey)
+      	val message = msg.utf8String.trim()
+      	val src = sender()
+      	implicit val conn = DB.getConnection
+      	async {
+      	  message match {
+      	    case AUTH(login, realm, password) => auth(login, realm, password, pkey)
+      	    case CHECK(token, tag, permission) => check(token, tag, permission)
+      	    case STOP(token) => logout(token, pkey)
+      	    case ATTR_QUERY(token, attr) => attr_query(token, pkey, attr)
+      	    case ATTR_QUERY_EXTERNAL(token, tag, attr) => attr_query(token, tag, attr)
+      	    case ATTR_UPDATE(token, name, t, value) => attr_update(token, pkey, name, t, value)
+            case ATTR_DELETE(token, attr) => attr_delete(token, pkey, attr)
+      	    case _ => throw new java.lang.IllegalArgumentException("Invalid request")
+      	  }
+      	} andThen {
+      	  case r => conn.close()
+      	} onComplete {
+      	  case Success(data) => src ! Write(encrypt(ByteString(data), encryptor))
+      	  case Failure(error) => src ! Write(encrypt(ByteString("-%s:%s\r\n".format(error.getClass().getName(), error.getMessage())), encryptor))
+      	}
       } else
-	context become crypto_receive(content, encryptor, decryptor, pkey)
+      	context become crypto_receive(content, encryptor, decryptor, pkey)
     }
     case PeerClosed     => context stop self
   }
-
 }
 
 class Server(args: scala.Array[String]) extends Actor with Loader with ActorLogging {
@@ -336,7 +371,7 @@ class Server(args: scala.Array[String]) extends Actor with Loader with ActorLogg
   def receive = {
     case b @ Bound(localAddress) => {
       val announcer = certificate flatMap { cert =>
-	getInterface(config.getString("udp.iface")) map { iface =>
+      	getInterface(config.getString("udp.iface")) map { iface =>
           context.actorOf(Props(classOf[DatagramHandler], cert, new InetSocketAddress(config.getInt("udp.port")), InetAddress.getByName(config.getString("udp.group")), iface))
         }
       }

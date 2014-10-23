@@ -9,6 +9,7 @@ ext {
     scalaVersion = '2.11'
     scalaRelease = '2'
     akkaVersion = '2.3.6'
+    springVersion = '4.1.1.RELEASE'
 }
 
 repositories {
@@ -31,6 +32,9 @@ dependencies {
 	testCompile "org.scalatest:scalatest:2.1.6"
 	testCompile "junit:junit:4.11"
 	testCompile "com.novocode:junit-interface:0.10"
+	compile "org.springframework:spring-context:$springVersion"
+	compile "org.springframework:spring-jdbc:$springVersion"
+	compile "org.springframework:spring-tx:$springVersion"
 }
 
 jar {

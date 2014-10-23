@@ -43,7 +43,7 @@ object RequestHander {
   val STOP = "logout (?<token>[A-Fa-f0-9]+)".r
   val ATTR_QUERY = "get (?<token>[A-Fa-f0-9]+)/(?<attr>[\\w.\\-_:]+)".r
   val ATTR_QUERY_EXTERNAL = "get (?<token>[A-Fa-f0-9]+)@(?<tag>(?:ip|key):[^/]+)/(?<attr>[\\w.\\-_:]+)".r
-  val ATTR_UPDATE = "set (?<token>[A-Fa-f0-9]+)/(?<attr>[\\w.\\-_:]+)=(?<value>[\\w]*|\\$)".r //$ -> null
+  val ATTR_UPDATE = "set (?<token>[A-Fa-f0-9]+)/(?<attr>[\\w.\\-_:]+)=(?<type>[\\w]+):(?<value>[\\w]*|\\$)".r //$ -> null
   val ATTR_DELETE = "unset (?<token>[A-Fa-f0-9]+)/(?<attr>[\\w.\\-_:]+)".r
   val LINE_DELIMITER = Seq(13, 10)
 }

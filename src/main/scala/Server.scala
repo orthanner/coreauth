@@ -30,13 +30,17 @@ import org.springframework.jdbc.core.simple._
 import org.springframework.jdbc.datasource._
 import org.springframework.transaction.support._
 import org.springframework.transaction._
+import scala.collection.JavaConverters._
 
 class Server(args: scala.Array[String]) extends Actor with Loader with ActorLogging {
   import Tcp._
   import context.system
 
   lazy val config = ConfigFactory.parseFile(new java.io.File(if(args.length > 0) args(0) else "coreauth.conf"))
-    .withFallback(ConfigFactory.parseString("udp.iface=" + NetworkInterface.getByIndex(0).getName()))
+    .withFallback(ConfigFactory.parseString("udp.iface=" +
+                  NetworkInterface.getNetworkInterfaces().asScala.filter { iface =>
+                    iface.isUp && iface.supportsMulticast
+                  }.toSeq.head.getName))
     .withFallback(ConfigFactory.parseString("udp.port=9876"))
     .withFallback(ConfigFactory.parseString("tcp.port=9876"))
     .withFallback(ConfigFactory.parseString("ssl.algorithm=RSA"))

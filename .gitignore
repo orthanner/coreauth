@@ -5,3 +5,4 @@ build/
 *.scala~
 *.sql~
 gradle-app.setting
+coreauth.conf

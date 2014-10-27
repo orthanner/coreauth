@@ -17,7 +17,7 @@ import java.nio._
 import java.nio.channels._
 import java.nio.charset._
 import javax.crypto._
-import java.security.{ Key, PrivateKey, PublicKey, KeyFactory, Signature }
+import java.security.{ Key, PrivateKey, PublicKey, KeyFactory, Signature, AccessControlException }
 import java.security.cert._
 import java.security.spec._
 import java.io.{ InputStream, FileInputStream, IOException, FileNotFoundException, InputStreamReader, Reader }
@@ -56,7 +56,7 @@ class RequestHandler(client: String, DB: JdbcTemplate, key: Try[PrivateKey], key
 
   implicit val exec = context.dispatcher.asInstanceOf[Executor with ExecutionContext]
 
-  val sessionStarter = new SimpleJdbcInsert(DB).withTableName("session").usingColumns("uid", "realm", "token", "tag")
+  val sessionStarter = new SimpleJdbcInsert(DB).withTableName("session").usingColumns("user_id", "realm", "token", "tag")
 
   val keyFactory = KeyFactory.getInstance(config.getString("ssl.algorithm"))
 
@@ -83,16 +83,16 @@ class RequestHandler(client: String, DB: JdbcTemplate, key: Try[PrivateKey], key
         (rc: ResultSet) => (uid, rc.getBoolean(1))
       }
     } match {
-      case None => throw new java.security.AccessControlException("Invalid credentials")
+      case None => throw new AccessControlException("Invalid credentials")
       case Some(t) => t match {
         case (uid: Int, permitted: Boolean) =>
           if (permitted) {
-            if (sessionStarter.execute(Map("uid" -> uid, "realm" -> realm, "token" -> sid, "tag" -> tag) map { case (k, v) => (k, v.asInstanceOf[Object]) } asJava) == 0)
+            if (sessionStarter.execute(Map("user_id" -> uid, "realm" -> realm, "token" -> sid, "tag" -> tag) map { case (k, v) => (k, v.asInstanceOf[Object]) } asJava) == 0)
               throw new SQLException("Could not create session")
             else
               Some(sid)
           } else {
-            throw new java.security.AccessControlException("Specified user cannot access this realm")
+            throw new AccessControlException("Specified user cannot access this realm")
           }
       }
     }
@@ -107,17 +107,23 @@ class RequestHandler(client: String, DB: JdbcTemplate, key: Try[PrivateKey], key
 
   def attr_query(token: String, tag: String, attr: String): Option[String] =
     getSession(token, tag) map { session =>
-      get(DB)("select \"type\", value from extra_attrs where name=? and user_id=?", attr, session.uid.asInstanceOf[Object]) { result =>
-        val in = result.getCharacterStream("value")
-        val sb = ((new StringBuilder()) /: (read(in) takeWhile { _._1 != -1 } map { _._2 })) (_.append(_))
-        in.close()
-        val t = result.getString("type")
-        val value = t match {
-          case "text" => ByteString(encodeBase64String(sb.toString.getBytes("UTF-8")))
-          case _ => sb.toString
-        }
-        "%s:%s".format(t, value)
-      } getOrElse "$"
+      attr match {
+        case "login" => get(DB)("select login from users where id=?", session.uid.asInstanceOf[Object]) { result =>
+          "text:%s".format(encodeBase64String(result.getString("login").getBytes("UTF-8")))
+        } get
+        case _ => get(DB)("select \"type\", value from extra_attrs where name=? and user_id=?", attr, session.uid.asInstanceOf[Object]) { result =>
+          val in = result.getCharacterStream("value")
+          val sb = new String((Array.empty[Char] /: (read(in) takeWhile { _._1 != -1 } map { _._2 } )) (_ ++ _))
+          in.close()
+          val t = result.getString("type")
+          val value = t match {
+            case "text" => encodeBase64String(sb.getBytes("UTF-8"))
+            case _ => sb
+          }
+          log.info("attr value for {}/{}/{} is {}", token, tag, attr, value)
+          "%s:%s".format(t, value)
+        } getOrElse "$"
+      }
     }
 
   def attr_update(token: String, tag: String, name: String, t: String, value: String): Option[String] =
@@ -223,8 +229,8 @@ class RequestHandler(client: String, DB: JdbcTemplate, key: Try[PrivateKey], key
       	  }
       	} onComplete {
           case Success(result) => result match {
-            case Some(data) => src ! Write(ByteString("+%s\r\n".format(data)))
-            case None => src ! Write(ByteString("-no session found\r\n"))
+            case Some(data) => src ! Write(encrypt(ByteString("+%s\r\n".format(data)), encryptor))
+            case None => src ! Write(encrypt(ByteString("-no session found\r\n"), encryptor))
           }
       	  case Failure(error) => src ! Write(encrypt(ByteString("-%s:%s\r\n".format(error.getClass().getName(), error.getMessage())), encryptor))
       	}

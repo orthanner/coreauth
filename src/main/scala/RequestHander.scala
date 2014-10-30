@@ -21,8 +21,6 @@ import java.security.{ Key, PrivateKey, PublicKey, KeyFactory, Signature, Access
 import java.security.cert._
 import java.security.spec._
 import java.io.{ InputStream, FileInputStream, IOException, FileNotFoundException, InputStreamReader, Reader }
-import rx.lang.scala._
-import rx.lang.scala.subjects._
 import ExecutionContext.Implicits.global
 import scala.async.Async.{ async, await }
 import org.springframework.jdbc.core._
@@ -53,8 +51,11 @@ class RequestHandler(client: String, DB: JdbcTemplate, key: Try[PrivateKey], key
   import RequestHander._
   import Crypt._
   import Base64._
+ // import Sender._
 
   implicit val exec = context.dispatcher.asInstanceOf[Executor with ExecutionContext]
+
+  //val peer = context actorOf Props[Sender]
 
   val sessionStarter = new SimpleJdbcInsert(DB).withTableName("session").usingColumns("user_id", "realm", "token", "tag")
 
@@ -66,6 +67,10 @@ class RequestHandler(client: String, DB: JdbcTemplate, key: Try[PrivateKey], key
     }
 
   def receive = raw_receive(ByteString.empty)
+
+  def send(target: ActorRef, data: ByteString) = {
+    target ! Write(data)//peer ! Send(target, data)
+  }
 
   def encrypt(data: ByteString, cipher: Cipher): ByteString = {
     val in = data.toByteBuffer
@@ -120,7 +125,7 @@ class RequestHandler(client: String, DB: JdbcTemplate, key: Try[PrivateKey], key
             case "text" => encodeBase64String(sb.getBytes("UTF-8"))
             case _ => sb
           }
-          log.info("attr value for {}/{}/{} is {}", token, tag, attr, value)
+          log.info("attr value for {}/{}/{} is {}", token, tag, attr, sb)
           "%s:%s".format(t, value)
         } getOrElse "$"
       }
@@ -150,8 +155,9 @@ class RequestHandler(client: String, DB: JdbcTemplate, key: Try[PrivateKey], key
         	context become raw_receive(content.drop(msg.length + LINE_DELIMITER.size))
         	val message = msg.utf8String.trim()
         	val src = sender()
+          log.info("processing {}", message)
         	async {
-        	  message match {
+        	  val result: Option[String] = message match {
         	    case HANDSHAKE(cert) => {
         	      key match {
               		case Success(k) => {
@@ -194,12 +200,20 @@ class RequestHandler(client: String, DB: JdbcTemplate, key: Try[PrivateKey], key
             case ATTR_DELETE(token, attr) => attr_delete(token, "ip:%s".format(client), attr)
       	    case _ => throw new java.lang.IllegalArgumentException("Invalid request")
       	  }
+          println("processing complete")
+          result
       	} onComplete {
-      	  case Success(result) => result match {
-            case Some(data) => src ! Write(ByteString("+%s\r\n".format(data)))
-            case None => src ! Write(ByteString("-no session found\r\n"))
+      	  case Success(result) => {
+            result match {
+              case Some(data) => send(src, ByteString("+%s\r\n".format(data)))
+              case None       => send(src, ByteString("-no session found\r\n"))
+            }
+            println("sent reply")
           }
-      	  case Failure(error) => src ! Write(ByteString("-%s:%s\r\n".format(error.getClass().getName(), error.getMessage())))
+      	  case Failure(error) => {
+            send(src, ByteString("-%s:%s\r\n".format(error.getClass().getName(), error.getMessage())))
+            println("failed request: %s" format error)
+          }
       	}
       } else
       	context become raw_receive(content)
@@ -215,7 +229,7 @@ class RequestHandler(client: String, DB: JdbcTemplate, key: Try[PrivateKey], key
       	val msg = content.slice(0, pos)
       	context become crypto_receive(content.drop(msg.length + LINE_DELIMITER.size), encryptor, decryptor, pkey)
       	val message = msg.utf8String.trim()
-      	val src = sender()
+        val src = sender
       	async {
       	  message match {
       	    case AUTH(login, realm, password) => auth(login, realm, password, pkey)
@@ -225,14 +239,14 @@ class RequestHandler(client: String, DB: JdbcTemplate, key: Try[PrivateKey], key
       	    case ATTR_QUERY_EXTERNAL(token, tag, attr) => attr_query(token, tag, attr)
       	    case ATTR_UPDATE(token, name, t, value) => attr_update(token, pkey, name, t, value)
             case ATTR_DELETE(token, attr) => attr_delete(token, pkey, attr)
-      	    case _ => throw new java.lang.IllegalArgumentException("Invalid request")
+      	    case _ => throw new IllegalArgumentException("Invalid request")
       	  }
       	} onComplete {
           case Success(result) => result match {
-            case Some(data) => src ! Write(encrypt(ByteString("+%s\r\n".format(data)), encryptor))
-            case None => src ! Write(encrypt(ByteString("-no session found\r\n"), encryptor))
+            case Some(data) => send(src, encrypt(ByteString("+%s\r\n".format(data)), encryptor))
+            case None => send(src, encrypt(ByteString("-no session found\r\n"), encryptor))
           }
-      	  case Failure(error) => src ! Write(encrypt(ByteString("-%s:%s\r\n".format(error.getClass().getName(), error.getMessage())), encryptor))
+      	  case Failure(error) => send(src, encrypt(ByteString("-%s:%s\r\n".format(error.getClass().getName(), error.getMessage())), encryptor))
       	}
       } else
       	context become crypto_receive(content, encryptor, decryptor, pkey)

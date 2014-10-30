@@ -21,8 +21,6 @@ import java.security.{ Key, PrivateKey, PublicKey, KeyFactory, Signature }
 import java.security.cert._
 import java.security.spec._
 import java.io.{ InputStream, FileInputStream, IOException, FileNotFoundException, InputStreamReader, Reader }
-import rx.lang.scala._
-import rx.lang.scala.subjects._
 import ExecutionContext.Implicits.global
 import scala.async.Async.{ async, await }
 import org.springframework.jdbc.core._
@@ -31,6 +29,7 @@ import org.springframework.jdbc.datasource._
 import org.springframework.transaction.support._
 import org.springframework.transaction._
 import scala.collection.JavaConverters._
+import language.postfixOps
 
 class Server(args: scala.Array[String]) extends Actor with Loader with ActorLogging {
   import Tcp._
@@ -48,6 +47,7 @@ class Server(args: scala.Array[String]) extends Actor with Loader with ActorLogg
     .withFallback(ConfigFactory.parseString("ssl.cipher=RSA/ECB/OAEPWithSHA-256AndMGF1Padding"))
     .withFallback(ConfigFactory.parseString("ssl.signature=SHA512withRSA"))
     .withFallback(ConfigFactory.parseString("jdbc.connLimit=16"))
+    .withFallback(ConfigFactory.parseString("session.timeout=30"))
 
   lazy val DB = {
     val db = new BasicDataSource()
@@ -107,21 +107,29 @@ class Server(args: scala.Array[String]) extends Actor with Loader with ActorLogg
           context.actorOf(Props(classOf[DatagramHandler], cert, new InetSocketAddress(config.getInt("udp.port")), InetAddress.getByName(config.getString("udp.group")), iface))
         }
       }
-      context.become(listening(announcer), discardOld = false)
+      context.become(listening(announcer, context.system.scheduler.schedule(0 seconds, 1 minutes){
+          Try {
+            DB.update("delete from session where timestampdiff('minute', now(), last) > %s" format config.getInt("session.timeout"))
+          } recover {
+            case e => DB.update("delete from session where now() - interval '%s minutes' > last" format config.getInt("session.timeout"))
+          }
+        }), discardOld = false)
     }
     case CommandFailed(_: Bind) => context stop self
     case _ =>
   }
 
-  def listening(announcer: Try[ActorRef]): Receive = {
-    case c @ Connected(remote, local) =>
-      sender() ! Register(context.actorOf(Props(classOf[RequestHandler], remote.getHostString(), DB, key, keyGen, config)))
+  def listening(announcer: Try[ActorRef], cleanupTask: Cancellable): Receive = {
+    case c @ Connected(remote, local) => {
+      sender() ! Register(context.actorOf(Props(classOf[RequestHandler], remote.getHostString(), DB, key, keyGen, config)), keepOpenOnPeerClosed = true)
+    }
     case Unbind =>
       announcer match {
         case Success(ref) =>
           ref ! DatagramHandler.Unbind
         case Failure(_) =>
       }
+      cleanupTask.cancel
       context.unbecome()
     case _ =>
   }

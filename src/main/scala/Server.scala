@@ -46,8 +46,9 @@ class Server(args: scala.Array[String]) extends Actor with Loader with ActorLogg
     .withFallback(ConfigFactory.parseString("ssl.streamCipher=AES"))
     .withFallback(ConfigFactory.parseString("ssl.cipher=RSA/ECB/OAEPWithSHA-256AndMGF1Padding"))
     .withFallback(ConfigFactory.parseString("ssl.signature=SHA512withRSA"))
+    .withFallback(ConfigFactory.parseString("ssl.keyAgreement=DiffieHellman"))
     .withFallback(ConfigFactory.parseString("jdbc.connLimit=16"))
-    .withFallback(ConfigFactory.parseString("session.timeout=30"))
+    .withFallback(ConfigFactory.parseString("session.timeout=30m"))
 
   lazy val DB = {
     val db = new BasicDataSource()
@@ -89,7 +90,7 @@ class Server(args: scala.Array[String]) extends Actor with Loader with ActorLogg
 
   override def postStop = {
     IO(Tcp) ! Unbind
-    context.unbecome()
+    context become receive
   }
   
   def getInterface(name: String): Try[NetworkInterface] = Try {
@@ -109,9 +110,9 @@ class Server(args: scala.Array[String]) extends Actor with Loader with ActorLogg
       }
       context.become(listening(announcer, context.system.scheduler.schedule(0 seconds, 1 minutes){
           Try {
-            DB.update("delete from session where timestampdiff('minute', now(), last) > %s" format config.getInt("session.timeout"))
+            DB.update("delete from session where timestampdiff('minute', now(), last) > %s" format config.getDuration("session.timeout", java.util.concurrent.TimeUnit.MINUTES))
           } recover {
-            case e => DB.update("delete from session where now() - interval '%s minutes' > last" format config.getInt("session.timeout"))
+            case e => DB.update("delete from session where now() - interval '%s minutes' > last" format config.getDuration("session.timeout", java.util.concurrent.TimeUnit.MINUTES))
           }
         }), discardOld = false)
     }

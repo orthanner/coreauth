@@ -105,7 +105,7 @@ class RequestHandler(client: String, DB: JdbcTemplate, key: Try[PrivateKey], key
 
   def check(token: String, tag: String, permission: String): Option[String] =
     get(DB)("select count(*)>0 from profile_permissions pp left join profile p on pp.profile=p.id left join permission perm on pp.permission=perm.id left join user_profile up on p.id=up.profile_id left join session s on s.user_id=up.user_id where s.token=? and s.tag=? and perm.name=?", token, tag, permission) { rs =>
-      if (rs.getBoolean(1)) "ok" else throw new java.security.AccessControlException("Current user may not perform this operation")
+      if (rs.getBoolean(1)) "ok" else throw new AccessControlException("Current user may not perform this operation")
     }
 
   def logout(token: String, tag: String): Option[String] = if (update(DB)("delete from session where token=? and tag=?")(token, tag) > 0) Some("bye") else throw new NullPointerException("session not found")
@@ -155,35 +155,27 @@ class RequestHandler(client: String, DB: JdbcTemplate, key: Try[PrivateKey], key
         	context become raw_receive(content.drop(msg.length + LINE_DELIMITER.size))
         	val message = msg.utf8String.trim()
         	val src = sender()
-          log.info("processing {}", message)
         	async {
         	  val result: Option[String] = message match {
-        	    case HANDSHAKE(cert) => {
+        	    case HANDSHAKE(clientKeyData) => {
         	      key match {
               		case Success(k) => {
+                    //decode and parse client key
+                    val clientKey = keyFactory.generatePublic(new PKCS8EncodedKeySpec(decodeBase64(clientKeyData)))
+                    val dh = KeyAgreement.getInstance(config.getString("ssl.keyAgreement"))
+                    dh.init(k)
+                    dh.doPhase(clientKey, true)
               		  //generate session encryption key
-              		  val streamKey = keyGen.generateKey
-              		  //decode and parse client key
-              		  val clientKey = keyFactory.generatePublic(new PKCS8EncodedKeySpec(decodeBase64(cert)))
-              		  //encrypt session key for client...
-              		  val clientCipher = Cipher.getInstance(config.getString("ssl.cipher"))
-              		  clientCipher.init(Cipher.ENCRYPT_MODE, clientKey)
-              		  val keyData = clientCipher.update(streamKey.getEncoded)
-              		  val skey = encodeBase64(keyData)
-              		  //...and sign it
-              		  val signature = Signature.getInstance(config.getString("ssl.signature"))
-              		  signature.initSign(k)
-              		  signature.update(keyData)
-              		  val signatureData = encodeBase64(signature.sign())
+                    val streamKey = dh.generateSecret(config.getString("ssl.streamCipher"))
               		  //create encyption and decryption ciphers for the session
               		  val encryptor = Cipher.getInstance(config.getString("ssl.streamCipher"))
               		  encryptor.init(Cipher.ENCRYPT_MODE, streamKey)
               		  val decryptor = Cipher.getInstance(config.getString("ssl.streamCipher"))
               		  decryptor.init(Cipher.DECRYPT_MODE, streamKey)
               		  //switch to TLS
-              		  context become crypto_receive(ByteString.empty, encryptor, decryptor, "key:%s".format(encodeBase64(clientKey.getEncoded)))
+              		  context become crypto_receive(ByteString.empty, encryptor, decryptor, "key:%s".format(clientKeyData))
               		  //send reply
-              		  Some("%s %s".format(skey, signatureData))
+              		  Some("+TLS enabled"/*.format(skey, signatureData)*/)
               		}
               		case Failure(error) => {
               		  log.error("Failed to load key", error)
@@ -198,7 +190,7 @@ class RequestHandler(client: String, DB: JdbcTemplate, key: Try[PrivateKey], key
       	    case ATTR_QUERY_EXTERNAL(token, tag, attr) => attr_query(token, tag, attr)
       	    case ATTR_UPDATE(token, name, t, value) => attr_update(token, "ip:%s".format(client), name, t, value)
             case ATTR_DELETE(token, attr) => attr_delete(token, "ip:%s".format(client), attr)
-      	    case _ => throw new java.lang.IllegalArgumentException("Invalid request")
+      	    case _ => throw new IllegalArgumentException("Invalid request")
       	  }
           println("processing complete")
           result

@@ -10,6 +10,6 @@ Currently, the following backend stores are supported:
 * [MariaDB](http://mariadb.org/)
 * [H2](http://www.h2database.com/html/main.html)
 
-Adding support for other RDBMS is as easy as adding appropriate driver dependencies to `build.gradle` and creating an SQL schema file.
+Adding support for other RDBMS is as easy as adding appropriate driver dependencies to `build.sbt` and creating an SQL schema file.
 
 For table schema for your database, please check the appropriate sql script.

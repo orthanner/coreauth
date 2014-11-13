@@ -51,11 +51,8 @@ class RequestHandler(client: String, DB: JdbcTemplate, key: Try[PrivateKey], key
   import RequestHander._
   import Crypt._
   import Base64._
- // import Sender._
 
   implicit val exec = context.dispatcher.asInstanceOf[Executor with ExecutionContext]
-
-  //val peer = context actorOf Props[Sender]
 
   val sessionStarter = new SimpleJdbcInsert(DB).withTableName("session").usingColumns("user_id", "realm", "token", "tag")
 
@@ -69,7 +66,7 @@ class RequestHandler(client: String, DB: JdbcTemplate, key: Try[PrivateKey], key
   def receive = raw_receive(ByteString.empty)
 
   def send(target: ActorRef, data: ByteString) = {
-    target ! Write(data)//peer ! Send(target, data)
+    target ! Write(data)
   }
 
   def encrypt(data: ByteString, cipher: Cipher): ByteString = {
@@ -125,7 +122,6 @@ class RequestHandler(client: String, DB: JdbcTemplate, key: Try[PrivateKey], key
             case "text" => encodeBase64String(sb.getBytes("UTF-8"))
             case _ => sb
           }
-          log.info("attr value for {}/{}/{} is {}", token, tag, attr, sb)
           "%s:%s".format(t, value)
         } getOrElse "$"
       }
@@ -133,7 +129,10 @@ class RequestHandler(client: String, DB: JdbcTemplate, key: Try[PrivateKey], key
 
   def attr_update(token: String, tag: String, name: String, t: String, value: String): Option[String] =
     getSession(token, tag) map { session =>
-      val clob = new SqlLobValue(if ("text".compareTo(t) == 0) ByteString(decodeBase64(value)).utf8String else value)
+      val clob = new SqlLobValue(t match {
+        case "text" => ByteString(decodeBase64(value)).utf8String
+        case _ => value
+      })
       val changed = DB.update("update extra_attrs set value=?, \"type\"=? where user_id=? and name=?", clob, t, session.uid.asInstanceOf[Object], name)
       if (changed == 0) {
         DB.update("insert into extra_attrs(value, \"type\", user_id, name, type, value) values (?, ?, ?, ?)", clob, t, session.uid.asInstanceOf[Object], name)
@@ -166,16 +165,17 @@ class RequestHandler(client: String, DB: JdbcTemplate, key: Try[PrivateKey], key
                     dh.init(k)
                     dh.doPhase(clientKey, true)
               		  //generate session encryption key
-                    val streamKey = dh.generateSecret(config.getString("ssl.streamCipher"))
+                    val streamCipher = config.getString("ssl.streamCipher")
+                    val streamKey = dh.generateSecret(streamCipher)
               		  //create encyption and decryption ciphers for the session
-              		  val encryptor = Cipher.getInstance(config.getString("ssl.streamCipher"))
+              		  val encryptor = Cipher.getInstance(streamCipher)
               		  encryptor.init(Cipher.ENCRYPT_MODE, streamKey)
-              		  val decryptor = Cipher.getInstance(config.getString("ssl.streamCipher"))
+              		  val decryptor = Cipher.getInstance(streamCipher)
               		  decryptor.init(Cipher.DECRYPT_MODE, streamKey)
               		  //switch to TLS
               		  context become crypto_receive(ByteString.empty, encryptor, decryptor, "key:%s".format(clientKeyData))
               		  //send reply
-              		  Some("+TLS enabled"/*.format(skey, signatureData)*/)
+              		  Some("+TLS enabled")
               		}
               		case Failure(error) => {
               		  log.error("Failed to load key", error)
@@ -192,7 +192,6 @@ class RequestHandler(client: String, DB: JdbcTemplate, key: Try[PrivateKey], key
             case ATTR_DELETE(token, attr) => attr_delete(token, "ip:%s".format(client), attr)
       	    case _ => throw new IllegalArgumentException("Invalid request")
       	  }
-          println("processing complete")
           result
       	} onComplete {
       	  case Success(result) => {
@@ -200,11 +199,10 @@ class RequestHandler(client: String, DB: JdbcTemplate, key: Try[PrivateKey], key
               case Some(data) => send(src, ByteString("+%s\r\n".format(data)))
               case None       => send(src, ByteString("-no session found\r\n"))
             }
-            println("sent reply")
           }
       	  case Failure(error) => {
             send(src, ByteString("-%s:%s\r\n".format(error.getClass().getName(), error.getMessage())))
-            println("failed request: %s" format error)
+            log.error("failed request", error)
           }
       	}
       } else

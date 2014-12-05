@@ -21,10 +21,10 @@ trait JdbcHelpers {
   def query[T](db: JdbcTemplate)(query: String, args: Object*)(callback: RowMappingFunction[T]): java.util.List[T] = db.query(query, args.toArray, mappingRows(callback))
 
   def queryForObject[T](db: JdbcTemplate)(query: String, args: Array[Object], argTypes: Array[Int])(callback: RowMappingFunction[T]): Option[T] = try {
-      Some(db.queryForObject(query, args, argTypes, mappingRows(callback)))
-    } catch {
-      case e: EmptyResultDataAccessException => None
-    }
+    Some(db.queryForObject(query, args, argTypes, mappingRows(callback)))
+  } catch {
+    case e: EmptyResultDataAccessException => None
+  }
 
   def update(db: JdbcTemplate)(query: String)(args: Object*): Int = db.update(query, new ArgumentPreparedStatementSetter(args.toArray))
 

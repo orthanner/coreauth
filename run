@@ -1,4 +1,4 @@
 #!/bin/sh
 
 cd $(dirname $0)
-/usr/sbin/daemon -p pidfile /usr/bin/env JAVA_HOME=/usr/local/openjdk8 /usr/local/bin/sbt run
+/usr/bin/env JAVA_HOME=/usr/local/openjdk8 /usr/local/bin/sbt run >sbt.log 2>sbterr.log

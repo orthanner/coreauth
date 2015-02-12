@@ -46,7 +46,7 @@ object RequestHander {
   val LINE_DELIMITER = Seq(13, 10)
 }
 
-class RequestHandler(client: String, DB: JdbcTemplate, key: Try[PrivateKey], keyGen: KeyGenerator, config: Config) extends Actor with Loader with ActorLogging with TxHelpers with JdbcHelpers {
+class RequestHandler(client: String, DB: JdbcTemplate, key: Try[PrivateKey], config: Config) extends Actor with Loader with ActorLogging with TxHelpers with JdbcHelpers {
   import Tcp._
   import RequestHander._
   import Crypt._
@@ -61,6 +61,9 @@ class RequestHandler(client: String, DB: JdbcTemplate, key: Try[PrivateKey], key
   def getSession(token: String, tag: String): Option[Session] =
     get(DB)("select user_id, realm from session where token=? and tag=?", token, tag) { s =>
       Session(s.getInt("user_id"), s.getString("realm"))
+    } map { s =>
+      log.info("updated {}", update(DB)("update session set last=now() where token=? and tag=?")(token, tag))
+      s
     }
 
   def receive = raw_receive(ByteString.empty)

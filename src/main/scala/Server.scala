@@ -20,7 +20,7 @@ import javax.crypto._
 import java.security.{ Key, PrivateKey, PublicKey, KeyFactory, Signature }
 import java.security.cert._
 import java.security.spec._
-import java.io.{ InputStream, FileInputStream, IOException, FileNotFoundException, InputStreamReader, Reader }
+import java.io.{ InputStream, FileInputStream, IOException, FileNotFoundException, InputStreamReader, Reader, File }
 import ExecutionContext.Implicits.global
 import scala.async.Async.{ async, await }
 import org.springframework.jdbc.core._
@@ -35,7 +35,7 @@ class Server(args: scala.Array[String]) extends Actor with Loader with ActorLogg
   import Tcp._
   import context.system
 
-  lazy val config = ConfigFactory.parseFile(new java.io.File(if(args.length > 0) args(0) else "coreauth.conf"))
+  lazy val config = ConfigFactory.parseFile(new File(if(args.length > 0) args(0) else "coreauth.conf"))
     .withFallback(ConfigFactory.parseString("udp.iface=" +
                   NetworkInterface.getNetworkInterfaces().asScala.filter { iface =>
                     iface.isUp && iface.supportsMulticast
@@ -122,7 +122,7 @@ class Server(args: scala.Array[String]) extends Actor with Loader with ActorLogg
 
   def listening(announcer: Try[ActorRef], cleanupTask: Cancellable): Receive = {
     case c @ Connected(remote, local) => {
-      sender() ! Register(context.actorOf(Props(classOf[RequestHandler], remote.getHostString(), DB, key, keyGen, config)), keepOpenOnPeerClosed = true)
+      sender() ! Register(context.actorOf(Props(classOf[RequestHandler], remote.getHostString(), DB, key, config)), keepOpenOnPeerClosed = true)
     }
     case Unbind =>
       announcer match {

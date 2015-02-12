@@ -1,19 +1,16 @@
 name := "Coreauth"
 
-version := "1.0"
+version := "1.1.beta1"
 
-scalaVersion := "2.11.2"
+scalaVersion := "2.11.5"
 
 resolvers += "Spring IO" at "http://repo.spring.io/release"
 
-val springVersion = "4.1.1.RELEASE"
-val akkaVersion = "2.3.6"
-
-lazy val hello = taskKey[Unit]("An example task")
-
-hello := { println("Hello!") }
+val springVersion = "4.1.4.RELEASE"
+val akkaVersion = "2.3.9"
 
 libraryDependencies ++= Seq(
+	"ch.qos.logback" % "logback-classic" % "1.1.2",
 	"com.typesafe.akka" %% "akka-actor" % akkaVersion,
 	"com.typesafe.akka" %% "akka-cluster" % akkaVersion,
     "org.scala-lang.modules" %% "scala-async" % "0.9.2",

@@ -35,7 +35,7 @@ class DatagramProcessor(certificate: Certificate) extends Actor {
       val submittedCertificate = cf.generateCertificate(in)
       in.close()
       if (certificate.equals(submittedCertificate))
-	context.parent ! d
+      context.parent ! d
     }
     case Unbind => sender ! Unbound
   }
@@ -62,7 +62,7 @@ class DatagramHandler(certificate: Certificate, bindAddr: InetSocketAddress, gro
 
   def receive = {
     case datagram: Datagram =>
-      pending.add(datagram)
+    pending.add(datagram)
     case Unbind => {
       context.become(stopping(sender), false)
       processor ! Unbind
@@ -86,23 +86,23 @@ class DatagramHandler(certificate: Certificate, bindAddr: InetSocketAddress, gro
     val membership = channel.register(selector, SelectionKey.OP_READ | SelectionKey.OP_WRITE, null)
     while (alive.get) {
       if (selector.select() > 0) {
-	if ((membership.readyOps() & SelectionKey.OP_READ) != 0) {
-	  channel.receive(buffer) match {
+        if ((membership.readyOps() & SelectionKey.OP_READ) != 0) {
+          channel.receive(buffer) match {
             case client: SocketAddress => {
-	      buffer.flip()
-	      processor ! Datagram(ByteString(buffer), client)
-	      buffer.clear()
-	    }
+              buffer.flip()
+              processor ! Datagram(ByteString(buffer), client)
+              buffer.clear()
+            }
             case null =>
-	  }
-	}
-	if ((membership.readyOps() & SelectionKey.OP_WRITE) != 0) {
-	  pending.poll() match {
-	    case Datagram(data, client) =>
-	      channel.send(data.toByteBuffer, client)
-	    case null =>
-	  }
-	}
+          }
+        }
+        if ((membership.readyOps() & SelectionKey.OP_WRITE) != 0) {
+          pending.poll() match {
+            case Datagram(data, client) =>
+            channel.send(data.toByteBuffer, client)
+            case null =>
+          }
+        }
       }
     }
     key.drop
